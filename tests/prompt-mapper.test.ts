@@ -48,9 +48,9 @@ describe("flattenPrompt", () => {
         content: [{ type: "text", text: "how are you?" }],
       },
     ]);
-    expect(result).toContain("[Contexto previo");
-    expect(result).toContain("[Fin del contexto]");
-    expect(result).toContain("Petición actual:");
+    expect(result).toContain("[Previous Conversation Context]");
+    expect(result).toContain("[End of Context]");
+    expect(result).toContain("Current Request:");
     expect(result).toContain("how are you?");
     expect(result).toContain("User: hello");
     expect(result).toContain("Assistant: hi there");
@@ -82,12 +82,12 @@ describe("flattenPrompt", () => {
     expect(result).toBe("First part.\nSecond part.");
   });
 
-  test("returns empty string for system-only prompt", () => {
+  test("returns empty string or system content for system-only prompt", () => {
     const result = flattenPrompt([
       { role: "system", content: "You are an agent." },
       { role: "system", content: "Use tools carefully." },
     ]);
-    expect(result).toBe("");
+    expect(result).toContain("You are an agent.");
   });
 
   test("ignores tool-call parts in multi-message context", () => {

@@ -19,6 +19,25 @@ export interface AgyProviderOptions {
   stateFile?: string;
   extraArgs?: string[];
   timeoutMs?: number;
+  model?: string;
+  effort?: string;
+}
+
+function parseModelAndEffort(rawModel?: string, existingEffort?: string): { model?: string; effort?: string } {
+  let model: string | undefined = rawModel;
+  let effort: string | undefined = existingEffort;
+
+  if (rawModel?.includes(":")) {
+    const [m, e] = rawModel.split(":");
+    model = m;
+    effort = effort ?? e;
+  }
+
+  if (model && !effort) {
+    effort = "high";
+  }
+
+  return { model, effort };
 }
 
 const prevOutputs = new Map<string, string>();
@@ -79,6 +98,7 @@ export function extractDelta(
 function buildLanguageModel(
   modelId: string,
   opts: AgyProviderOptions,
+  modelOpts?: { effort?: string; model?: string },
 ): LanguageModelV2 {
   const store = new SessionStore(opts.stateFile);
   const conversationsDir = opts.conversationsDir ?? defaultConversationsDir();
@@ -112,10 +132,28 @@ function buildLanguageModel(
 
       const prompt = flattenPrompt(newMessages);
 
+      const providerAgyOpts = callOpts.providerOptions?.agy as Record<string, unknown> | undefined;
+
+      const headerEffort = callOpts.headers?.["x-agy-effort"] as string | undefined;
+
+      const rawModel = (providerAgyOpts?.model as string) ??
+        modelOpts?.model ??
+        modelId ??
+        opts.model;
+      const rawEffort =
+        (providerAgyOpts?.effort as string) ??
+        headerEffort ??
+        modelOpts?.effort ??
+        opts.effort;
+
+      const { model, effort } = parseModelAndEffort(rawModel, rawEffort);
+
       const result = await runAgy({
         prompt,
         cwd: process.cwd(),
         conversationId: conversationId ?? undefined,
+        model,
+        effort,
         binary: opts.binary,
         extraArgs: opts.extraArgs,
         timeoutMs: opts.timeoutMs,
@@ -285,8 +323,11 @@ export function createAgyProvider(
 ): ProviderV2 & { (modelId: string): LanguageModelV2; provider: string } {
   const resolvedOpts = opts ?? {};
 
-  const factory = (modelId: string): LanguageModelV2 => {
-    return buildLanguageModel(modelId, resolvedOpts);
+  const factory = (
+    modelId: string,
+    modelOpts?: { effort?: string; model?: string },
+  ): LanguageModelV2 => {
+    return buildLanguageModel(modelId, resolvedOpts, modelOpts);
   };
 
   factory.provider = "agy";

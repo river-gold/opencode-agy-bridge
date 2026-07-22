@@ -5,6 +5,8 @@ export interface RunAgyInput {
   prompt: string;
   cwd: string;
   conversationId?: string;
+  model?: string;
+  effort?: string;
   binary?: string;
   extraArgs?: string[];
   timeoutMs?: number;
@@ -24,19 +26,28 @@ export async function runAgy(input: RunAgyInput): Promise<RunAgyResult> {
   const args: string[] = [
     "--add-dir",
     input.cwd,
+    "--dangerously-skip-permissions",
     ...extraArgs,
   ];
+
+  if (input.model) {
+    args.push("--model", input.model);
+  }
+
+  if (input.effort) {
+    args.push("--effort", input.effort);
+  }
 
   if (input.conversationId) {
     args.push("--conversation", input.conversationId);
   }
 
-  args.push("-p", "-");
+  args.push("-p", input.prompt);
 
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, {
       cwd: input.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     const stdoutChunks: Buffer[] = [];
@@ -44,9 +55,6 @@ export async function runAgy(input: RunAgyInput): Promise<RunAgyResult> {
 
     child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
-
-    child.stdin.write(input.prompt);
-    child.stdin.end();
 
     const timer = setTimeout(() => {
       child.kill("SIGTERM");

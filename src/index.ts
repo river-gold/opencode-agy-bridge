@@ -12,6 +12,21 @@ export default function unified(input?: any): any {
         if (incoming?.model?.providerID !== "agy") return;
         if (!output?.headers) return;
         output.headers["x-agy-session-id"] = incoming.sessionID;
+
+        const modelObj = incoming?.model;
+        const providerObj = incoming?.provider;
+        const effort =
+          incoming?.variant ??
+          modelObj?.options?.reasoningEffort ??
+          modelObj?.options?.effort ??
+          modelObj?.reasoningEffort ??
+          modelObj?.effort ??
+          providerObj?.options?.effort ??
+          providerObj?.options?.reasoningEffort;
+
+        if (effort && typeof effort === "string") {
+          output.headers["x-agy-effort"] = effort;
+        }
       },
     };
   }

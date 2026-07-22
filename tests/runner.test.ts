@@ -125,4 +125,38 @@ exit 0
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  test("passes model and effort when provided", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-bridge-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+echo "$@"
+cat -
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const result = await runAgy({
+        binary: mockBinary,
+        prompt: "hello model",
+        cwd: tmp,
+        model: "gemini-3.6-flash",
+        effort: "high",
+        timeoutMs: 5000,
+      });
+
+      expect(result.stdout).toContain("--model");
+      expect(result.stdout).toContain("gemini-3.6-flash");
+      expect(result.stdout).toContain("--effort");
+      expect(result.stdout).toContain("high");
+      expect(result.stdout).toContain("hello model");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
 });
