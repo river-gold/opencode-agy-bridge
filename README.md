@@ -25,7 +25,7 @@ Add this to `~/.config/opencode/opencode.json` or `opencode.jsonc`:
   "provider": {
     "agy": {
       "npm": "opencode-agy-plugin",
-      "name": "Google Antigravity (via agy CLI)",
+      "name": "Antigravity",
       "options": {
         "binary": "agy",
         "timeoutMs": 300000
