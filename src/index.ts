@@ -10,7 +10,7 @@ export default function unified(input?: any): any {
     return {
       config: async (cfg: { provider?: Record<string, any> }) => {
         const directory = input.directory;
-        if (typeof directory === "string" && directory) {
+        if (typeof directory === "string" && directory.trim() !== "") {
           const options = ((cfg.provider ??= {}).agy ??= {}).options ??= {};
           if (options.cwd == null) options.cwd = directory;
         }

@@ -153,7 +153,7 @@ function buildLanguageModel(
       const result = await runAgyStream(
         {
           prompt,
-          cwd: opts.cwd ?? process.cwd(),
+          cwd: opts.cwd?.trim() || process.cwd(),
           conversationId: conversationId ?? undefined,
           model,
           effort,

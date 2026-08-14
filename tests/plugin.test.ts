@@ -41,4 +41,28 @@ describe("plugin directory cwd injection", () => {
     await config(cfg);
     expect(cfg.provider.agy.options.cwd).toBe("/explicit");
   });
+
+  for (const [name, entry] of [
+    ["plugin", plugin],
+    ["unified", unified],
+  ] as const) {
+    test(`${name} path does not inject blank directory`, async () => {
+      const models = { x: { name: "x" } };
+      for (const blank of ["", "   "]) {
+        const config = await configOf(entry, { directory: blank, client: {} });
+        const cfg: Record<string, any> = { provider: { agy: { models } } };
+        await config(cfg);
+        expect(cfg.provider.agy.options?.cwd).toBeUndefined();
+      }
+    });
+
+    test(`${name} path preserves configured empty cwd`, async () => {
+      const config = await configOf(entry, { directory, client: {} });
+      const cfg: Record<string, any> = {
+        provider: { agy: { models: { x: { name: "x" } }, options: { cwd: "" } } },
+      };
+      await config(cfg);
+      expect(cfg.provider.agy.options.cwd).toBe("");
+    });
+  }
 });

@@ -3,7 +3,7 @@ import { applyAgyModels } from "./agy-models.js";
 
 const plugin: Plugin = async ({ directory }) => ({
   config: async (cfg) => {
-    if (typeof directory === "string" && directory) {
+    if (typeof directory === "string" && directory.trim() !== "") {
       const options = ((cfg.provider ??= {}).agy ??= {}).options ??= {};
       if (options.cwd == null) options.cwd = directory;
     }
