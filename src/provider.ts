@@ -21,6 +21,7 @@ export interface AgyProviderOptions {
   timeoutMs?: number;
   model?: string;
   effort?: string;
+  cwd?: string;
 }
 
 function boundTurnPrompt(prompt: LanguageModelV2CallOptions["prompt"]) {
@@ -165,7 +166,7 @@ function buildLanguageModel(
       const result = await runAgyStream(
         {
           prompt,
-          cwd: process.cwd(),
+          cwd: opts.cwd?.trim() || process.cwd(),
           conversationId: conversationId ?? undefined,
           model,
           effort,

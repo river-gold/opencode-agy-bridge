@@ -3,6 +3,7 @@ import { createAgyProvider } from "../src/provider.js";
 import { writeFile, chmod, mkdtemp, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { realpathSync } from "node:fs";
 
 describe("AgyProvider model selection", () => {
   test("passes --model when specific modelId is provided", async () => {
@@ -150,6 +151,105 @@ exit 0
       const text = result.content[0].type === "text" ? result.content[0].text : "";
       expect(text).toContain("--model gemini-3.7-flash-high");
       expect(text).not.toContain("--effort");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("uses explicit provider cwd for --add-dir and spawn cwd", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+    const workspace = await mkdtemp(join(tmpdir(), "agy-workspace-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+echo "$@"
+echo "PWD=$PWD"
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const provider = createAgyProvider({
+        binary: mockBinary,
+        conversationsDir: tmp,
+        cwd: workspace,
+      });
+      const model = provider("gemini-3.6-flash");
+      const result = await model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      });
+
+      const text = result.content[0].type === "text" ? result.content[0].text : "";
+      expect(text).toContain(`--add-dir ${workspace}`);
+      expect(text).toContain(`PWD=${realpathSync(workspace)}`);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to process.cwd when provider cwd is absent", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+echo "$@"
+echo "PWD=$PWD"
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp });
+      const model = provider("gemini-3.6-flash");
+      const result = await model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      });
+
+      const text = result.content[0].type === "text" ? result.content[0].text : "";
+      expect(text).toContain(`--add-dir ${process.cwd()}`);
+      expect(text).toContain(`PWD=${realpathSync(process.cwd())}`);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to process.cwd when provider cwd is blank", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+echo "$@"
+echo "PWD=$PWD"
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      for (const cwd of ["", "   "]) {
+        const provider = createAgyProvider({
+          binary: mockBinary,
+          conversationsDir: tmp,
+          cwd,
+        });
+        const model = provider("gemini-3.6-flash");
+        const result = await model.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        });
+
+        const text = result.content[0].type === "text" ? result.content[0].text : "";
+        expect(text).toContain(`--add-dir ${process.cwd()}`);
+        expect(text).toContain(`PWD=${realpathSync(process.cwd())}`);
+      }
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }

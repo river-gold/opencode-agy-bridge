@@ -9,6 +9,11 @@ export default function unified(input?: any): any {
   if (input && typeof input === "object" && "client" in input) {
     return {
       config: async (cfg: { provider?: Record<string, any> }) => {
+        const directory = input.directory;
+        if (typeof directory === "string" && directory.trim() !== "") {
+          const options = ((cfg.provider ??= {}).agy ??= {}).options ??= {};
+          if (options.cwd == null) options.cwd = directory;
+        }
         await applyAgyModels(cfg);
       },
       "chat.headers": async (incoming: any, output: any) => {
