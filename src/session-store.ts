@@ -1,4 +1,5 @@
-import { readFile, writeFile, rename, mkdir, open, stat } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, open, stat, utimes, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -12,6 +13,17 @@ interface StoreFile {
   sessions: Record<string, StoreEntry>;
 }
 
+export interface AcquireLockOptions {
+  staleTimeoutMs?: number;
+  heartbeatIntervalMs?: number;
+}
+
+export type LockRelease = (() => Promise<void>) & {
+  stopHeartbeat: () => void;
+};
+
+const DEFAULT_STALE_TIMEOUT_MS = 30_000;
+
 function defaultStateFile(): string {
   return join(homedir(), ".opencode-agy-plugin", "sessions.json");
 }
@@ -20,45 +32,86 @@ function defaultBindingLockPath(): string {
   return join(homedir(), ".opencode-agy-plugin", "binding.lock");
 }
 
-async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
-  const lockDir = dirname(lockPath);
-  await mkdir(lockDir, { recursive: true });
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
-  const startTime = Date.now();
-  const staleTimeoutMs = 30_000;
-  let backoff = 1;
-  const maxBackoff = 500;
-
-  while (true) {
-    try {
-      const fh = await open(lockPath, "wx");
-      await fh.close();
-      return () => releaseLock(lockPath);
-    } catch {
-      if (Date.now() - startTime > staleTimeoutMs) {
-        try {
-          const stats = await stat(lockPath);
-          if (Date.now() - stats.mtimeMs > staleTimeoutMs) {
-            await releaseLock(lockPath);
-            continue;
-          }
-        } catch {
-          continue;
-        }
-      }
-      await new Promise((r) => setTimeout(r, backoff));
-      backoff = Math.min(backoff * 2, maxBackoff);
-    }
+async function tryCreateLock(lockPath: string, owner: string): Promise<boolean> {
+  try {
+    const fh = await open(lockPath, "wx");
+    await fh.writeFile(owner);
+    await fh.close();
+    return true;
+  } catch {
+    return false;
   }
 }
 
-async function releaseLock(lockPath: string): Promise<void> {
+async function maybeStealStaleLock(
+  lockPath: string,
+  staleTimeoutMs: number,
+): Promise<void> {
   try {
-    const { unlink } = await import("node:fs/promises");
+    const stats = await stat(lockPath);
+    if (Date.now() - stats.mtimeMs <= staleTimeoutMs) {
+      return;
+    }
+    await unlink(lockPath);
+  } catch {
+    // gone or already stolen
+  }
+}
+
+async function releaseOwnedLock(lockPath: string, owner: string): Promise<void> {
+  try {
+    const current = await readFile(lockPath, "utf-8");
+    if (current !== owner) {
+      return;
+    }
     await unlink(lockPath);
   } catch {
     // best effort
   }
+}
+
+export async function acquireLock(
+  lockPath: string,
+  options: AcquireLockOptions = {},
+): Promise<LockRelease> {
+  const staleTimeoutMs = options.staleTimeoutMs ?? DEFAULT_STALE_TIMEOUT_MS;
+  const heartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? Math.max(1, Math.floor(staleTimeoutMs / 3));
+
+  const lockDir = dirname(lockPath);
+  await mkdir(lockDir, { recursive: true });
+  const owner = randomUUID();
+
+  let backoff = 1;
+  const maxBackoff = 500;
+  for (;;) {
+    if (await tryCreateLock(lockPath, owner)) {
+      break;
+    }
+    await maybeStealStaleLock(lockPath, staleTimeoutMs);
+    await sleep(backoff);
+    backoff = Math.min(backoff * 2, maxBackoff);
+  }
+
+  const heartbeat = setInterval(() => {
+    void utimes(lockPath, new Date(), new Date()).catch(() => {});
+  }, heartbeatIntervalMs);
+  heartbeat.unref();
+
+  const stopHeartbeat = () => {
+    clearInterval(heartbeat);
+  };
+
+  const release = async () => {
+    stopHeartbeat();
+    await releaseOwnedLock(lockPath, owner);
+  };
+  release.stopHeartbeat = stopHeartbeat;
+  return release;
 }
 
 export class SessionStore {
@@ -72,7 +125,7 @@ export class SessionStore {
    * Acquires a global lock for the bind-while-running phase.
    * Prevents concurrent agy instances from creating ambiguous .pb files.
    */
-  static acquireBindingLock(): Promise<() => Promise<void>> {
+  static acquireBindingLock(): Promise<LockRelease> {
     return acquireLock(defaultBindingLockPath());
   }
 

@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { SessionStore } from "../src/session-store";
+import { acquireLock, SessionStore } from "../src/session-store";
 
 describe("SessionStore", () => {
   let dir: string;
@@ -88,19 +88,50 @@ describe("SessionStore", () => {
   });
 
   test("binding lock serializes concurrent access", async () => {
-    // Acquire first lock — should succeed
     const release1 = await SessionStore.acquireBindingLock();
     expect(release1).toBeInstanceOf(Function);
 
-    // Second acquisition should time out (but we release and retry)
     const release2Promise = SessionStore.acquireBindingLock();
 
-    // Release first lock
     await release1();
 
-    // Now second lock should succeed
     const release2 = await release2Promise;
     expect(release2).toBeInstanceOf(Function);
     await release2();
   }, 40000);
+
+  test("heartbeat keeps a held lock from being stolen after the stale window", async () => {
+    const lockPath = join(dir, "held.lock");
+    const opts = { staleTimeoutMs: 40, heartbeatIntervalMs: 10 };
+    const release1 = await acquireLock(lockPath, opts);
+
+    let stolen = false;
+    const pending = acquireLock(lockPath, opts).then((release2) => {
+      stolen = true;
+      return release2;
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+    expect(stolen).toBe(false);
+
+    await release1();
+    const release2 = await pending;
+    await release2();
+  });
+
+  test("release removes only its own lock after a stale steal", async () => {
+    const lockPath = join(dir, "owner.lock");
+    const opts = { staleTimeoutMs: 40, heartbeatIntervalMs: 10 };
+    const release1 = await acquireLock(lockPath, opts);
+    release1.stopHeartbeat();
+
+    await new Promise((r) => setTimeout(r, 80));
+    const release2 = await acquireLock(lockPath, opts);
+
+    await release1();
+    await access(lockPath);
+
+    await release2();
+    await expect(access(lockPath)).rejects.toThrow();
+  });
 });
