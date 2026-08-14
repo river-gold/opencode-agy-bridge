@@ -122,3 +122,54 @@ exit 0
     }
   });
 });
+
+describe("AgyProvider stream-json", () => {
+  test("doStream emits incremental text-delta then finish", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"init","conversation_id":"conv-1"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"Hel"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"lo"}'
+printf '%s\\n' '{"event":"step_update","status":"DONE","step_type":"agent_response","text_delta":"Hello"}'
+printf '%s\\n' '{"event":"result","status":"SUCCESS","response":"Hello","conversation_id":"conv-1"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp });
+      const model = provider("gemini-3.6-flash");
+      const { stream } = await model.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      });
+
+      const reader = stream.getReader();
+      const deltas: string[] = [];
+      let finished = false;
+      const readAll = async (): Promise<void> => {
+        const { done, value } = await reader.read();
+        if (done) {
+          return;
+        }
+        if (value.type === "text-delta") {
+          deltas.push(value.delta);
+        }
+        if (value.type === "finish") {
+          finished = true;
+        }
+        return readAll();
+      };
+      await readAll();
+
+      expect(deltas.join("")).toBe("Hello");
+      expect(finished).toBe(true);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+});

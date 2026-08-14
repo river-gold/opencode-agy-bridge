@@ -7,7 +7,7 @@ import type {
   EmbeddingModelV2,
   ImageModelV2,
 } from "@ai-sdk/provider";
-import { runAgy } from "./agy-runner.js";
+import { runAgyStream } from "./agy-runner.js";
 import { snapshot, findNewConversation, defaultConversationsDir } from "./conversation-tracker.js";
 import { SessionStore } from "./session-store.js";
 import { flattenPrompt } from "./prompt-mapper.js";
@@ -103,7 +103,10 @@ function buildLanguageModel(
   const store = new SessionStore(opts.stateFile);
   const conversationsDir = opts.conversationsDir ?? defaultConversationsDir();
 
-  const doGenerate = async (callOpts: LanguageModelV2CallOptions) => {
+  const runTurn = async (
+    callOpts: LanguageModelV2CallOptions,
+    onText?: (text: string) => void,
+  ) => {
     const sessionId =
       (callOpts.headers?.["x-agy-session-id"] as string) ??
       (callOpts.providerOptions?.agy as Record<string, unknown> | undefined)
@@ -114,9 +117,6 @@ function buildLanguageModel(
     let conversationId = entry?.conversationId ?? null;
     const processedMessages = entry?.processedMessages ?? 0;
 
-    // On first turn (no conversation yet), acquire a global lock before
-    // spawning agy so we can safely diff *.pb files without races from
-    // another concurrent OpenCode instance.
     let releaseBindingLock: (() => Promise<void>) | null = null;
     if (!conversationId) {
       releaseBindingLock = await SessionStore.acquireBindingLock();
@@ -148,16 +148,33 @@ function buildLanguageModel(
 
       const { model, effort } = parseModelAndEffort(rawModel, rawEffort);
 
-      const result = await runAgy({
-        prompt,
-        cwd: process.cwd(),
-        conversationId: conversationId ?? undefined,
-        model,
-        effort,
-        binary: opts.binary,
-        extraArgs: opts.extraArgs,
-        timeoutMs: opts.timeoutMs,
-      });
+      let streamed = false;
+      const result = await runAgyStream(
+        {
+          prompt,
+          cwd: process.cwd(),
+          conversationId: conversationId ?? undefined,
+          model,
+          effort,
+          binary: opts.binary,
+          extraArgs: opts.extraArgs,
+          timeoutMs: opts.timeoutMs,
+          abortSignal: callOpts.abortSignal,
+        },
+        (event) => {
+          if (event.type === "conversation" && !conversationId) {
+            conversationId = event.id;
+          }
+          if (event.type === "text" && event.text) {
+            streamed = true;
+            onText?.(event.text);
+          }
+        },
+      );
+
+      if (!conversationId && result.conversationId) {
+        conversationId = result.conversationId;
+      }
 
       if (!conversationId && before) {
         const newId = await findNewConversation(before, conversationsDir);
@@ -166,8 +183,6 @@ function buildLanguageModel(
         }
       }
 
-      // Restore prevOutput from persisted store (survives restarts).
-      // In-memory cache takes priority (faster, has latest turn data).
       let prevOutput = prevOutputs.get(sessionId) ?? "";
       if (!prevOutput && entry?.prevOutput) {
         prevOutput = entry.prevOutput;
@@ -176,13 +191,16 @@ function buildLanguageModel(
 
       const delta = extractDelta(prevOutput, result.stdout, !!conversationId);
 
+      if (!streamed && delta) {
+        onText?.(delta);
+      }
+
       if (conversationId) {
         prevOutputs.set(sessionId, result.stdout);
       } else {
         prevOutputs.delete(sessionId);
       }
 
-      // Persist state so it survives process restarts.
       await store.set(
         sessionId,
         conversationId,
@@ -194,9 +212,9 @@ function buildLanguageModel(
         content: [{ type: "text" as const, text: delta }],
         finishReason: "stop" as const,
         usage: {
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
+          inputTokens: result.usage?.inputTokens ?? 0,
+          outputTokens: result.usage?.outputTokens ?? 0,
+          totalTokens: result.usage?.totalTokens ?? 0,
         },
         providerMetadata: {
           agy: {
@@ -218,45 +236,36 @@ function buildLanguageModel(
     }
   };
 
+  const doGenerate = async (callOpts: LanguageModelV2CallOptions) => {
+    return runTurn(callOpts);
+  };
+
   const doStream = async (callOpts: LanguageModelV2CallOptions) => {
-    const generatePromise = doGenerate(callOpts);
-
-    let aborted = false;
-
-    callOpts.abortSignal?.addEventListener("abort", () => {
-      aborted = true;
-    });
-
     const stream = new ReadableStream<LanguageModelV2StreamPart>({
       async start(controller) {
+        let textStarted = false;
         try {
           controller.enqueue({
             type: "stream-start",
             warnings: [],
           });
 
-          const result = await generatePromise;
-
-          if (aborted) {
-            controller.close();
-            return;
-          }
-
-          const textContent = result.content.find(
-            (c) => c.type === "text",
-          );
-          const text = textContent && "text" in textContent ? textContent.text : "";
-
-          if (text) {
-            controller.enqueue({
-              type: "text-start",
-              id: "agy-1",
-            });
+          const result = await runTurn(callOpts, (text) => {
+            if (!textStarted) {
+              controller.enqueue({
+                type: "text-start",
+                id: "agy-1",
+              });
+              textStarted = true;
+            }
             controller.enqueue({
               type: "text-delta",
               id: "agy-1",
               delta: text,
             });
+          });
+
+          if (textStarted) {
             controller.enqueue({
               type: "text-end",
               id: "agy-1",
@@ -274,9 +283,6 @@ function buildLanguageModel(
           controller.enqueue({ type: "error", error: String(err) });
           controller.close();
         }
-      },
-      cancel() {
-        // agy is one-shot; no real cancellation possible here
       },
     });
 

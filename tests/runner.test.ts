@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { runAgy } from "../src/agy-runner";
+import { runAgy, runAgyStream } from "../src/agy-runner";
 import { writeFile, chmod, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -156,6 +156,47 @@ exit 0
       expect(result.stdout).toContain("--effort");
       expect(result.stdout).toContain("high");
       expect(result.stdout).toContain("hello model");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("parses stream-json NDJSON and skips DONE snapshot duplicate", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"init","conversation_id":"conv-1"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"Hel"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"lo"}'
+printf '%s\\n' '{"event":"step_update","status":"DONE","step_type":"agent_response","text_delta":"Hello"}'
+printf '%s\\n' '{"event":"result","status":"SUCCESS","response":"Hello","conversation_id":"conv-1"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const texts: string[] = [];
+      const result = await runAgyStream(
+        {
+          binary: mockBinary,
+          prompt: "hi",
+          cwd: tmp,
+          timeoutMs: 5000,
+        },
+        (event) => {
+          if (event.type === "text") {
+            texts.push(event.text);
+          }
+        },
+      );
+
+      expect(texts.join("")).toBe("Hello");
+      expect(result.stdout).toBe("Hello");
+      expect(result.conversationId).toBe("conv-1");
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }

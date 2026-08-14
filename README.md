@@ -14,10 +14,10 @@ opencode TUI
              agy --add-dir <cwd> --dangerously-skip-permissions
                  [--model <id>] [--effort <low|medium|high>]
                  [--conversation <id>] -p <prompt>
-              └─ agy → Google Antigravity backend
-                  └─ stdout (buffered, full response)
-              └─ provider extracts delta vs previous turn
-          └─ text-delta + finish → opencode renders the response
+               └─ agy → Google Antigravity backend
+                   └─ stdout NDJSON (stream-json text_delta)
+               └─ provider emits text-delta as fragments arrive
+           └─ text-delta + finish → opencode renders the response
 ```
 
 The prompt is passed as a CLI argument, not stdin. `--dangerously-skip-permissions` is always set so headless `agy` does not block on tool-permission prompts.
@@ -105,12 +105,13 @@ If the selected model id contains `:`, it is split into `--model` and `--effort`
 - **Session persistence** — conversation state survives OpenCode restarts via `~/.opencode-agy-plugin/sessions.json`.
 - **Conversation binding** — infers `conversation_id` by diffing `agy` `.pb` files so multi-turn chat works.
 - **Global binding lock** — serializes first-turn `.pb` discovery across concurrent OpenCode instances.
+- **stream-json** — `agy --output-format stream-json` fragments are forwarded as OpenCode `text-delta`.
 
 ## Known limitations
 
 | Limitation | Detail |
 |---|---|
-| **No real streaming** | `agy -p` buffers the full response and emits it on completion. Tokens appear in one batch. PTY allocation (`script -q`) does not destabilize the buffering — agy holds output until the response is complete regardless of whether stdout is a TTY. The provider emits a single `text-delta` per turn. |
+| **Streaming depends on `agy --output-format stream-json`** | Incremental `text-delta` comes from `agent_response.text_delta` events. Short replies may still arrive as a single `DONE` event. |
 | **`--dangerously-skip-permissions` always on** | There is no option to disable it. Tool permission prompts would otherwise block headless runs. |
 | **Requires authenticated `agy`** | You must run `agy` standalone at least once to authenticate via OAuth. |
 | **No tool-call passthrough** | `agy` CLI does not return structured tool calls to the caller. Tool use happens inside agy's own process. |
@@ -141,12 +142,7 @@ If you get `ProviderInitError` after configuring the plugin from an npm package,
 - **Session persistence across restarts** — conversation state survives OpenCode restarts via `~/.opencode-agy-plugin/sessions.json`.
 - **Conversation binding via `.pb` file diffing** — automatically discovers the `conversation_id` created by `agy` so multi-turn conversations work.
 - **Global binding lock** — prevents race conditions when multiple OpenCode instances run concurrently.
-
-### Future — Real streaming (see [`specs/docs/STREAMING_RESEARCH.md`](specs/docs/STREAMING_RESEARCH.md))
-
-The current plugin relies on `agy --print`, which buffers the full response before emitting it. Investigation has confirmed that the Antigravity **IDE binary** hosts a Connect/gRPC-JSON server (`language_server`) with streaming RPCs (`StreamCascadeReactiveUpdates`, `StreamCascadeSummariesReactiveUpdates`, `StreamAgentStateUpdates`) that deliver token-by-token output.
-
-A future v2 could bypass `agy --print` entirely and speak directly to a language_server instance (either the one the IDE already runs, or one the plugin spawns itself), providing real progressive streaming instead of single-batch `text-delta` delivery. Estimated effort: ~2 weeks. Blocked pending proto reverse-engineering and ToS review.
+- **stream-json** — `agy --output-format stream-json` `text_delta` events are forwarded as OpenCode `text-delta`.
 
 ## Project structure
 
