@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 
 interface StoreEntry {
   conversationId: string | null;
-  processedMessages: number;
   prevOutput: string;
 }
 
@@ -84,7 +83,6 @@ export class SessionStore {
   async set(
     sessionId: string,
     conversationId: string | null,
-    processedMessages: number = 0,
     prevOutput: string = "",
   ): Promise<void> {
     const stateDir = dirname(this.stateFile);
@@ -97,7 +95,6 @@ export class SessionStore {
       const store = await this.loadStoreUnlocked();
       store.sessions[sessionId] = {
         conversationId,
-        processedMessages,
         prevOutput,
       };
 

@@ -23,6 +23,11 @@ export interface AgyProviderOptions {
   effort?: string;
 }
 
+function boundTurnPrompt(prompt: LanguageModelV2CallOptions["prompt"]) {
+  const lastUser = prompt.filter((msg) => msg.role === "user").at(-1);
+  return lastUser ? [lastUser] : [];
+}
+
 function parseModelAndEffort(rawModel?: string, existingEffort?: string): { model?: string; effort?: string } {
   let model: string | undefined = rawModel;
   let effort: string | undefined = existingEffort;
@@ -111,7 +116,6 @@ function buildLanguageModel(
 
     const entry = await store.getEntry(sessionId);
     let conversationId = entry?.conversationId ?? null;
-    const processedMessages = entry?.processedMessages ?? 0;
 
     let releaseBindingLock: (() => Promise<void>) | null = null;
     if (!conversationId) {
@@ -123,7 +127,7 @@ function buildLanguageModel(
       before = conversationId ? null : await snapshot(conversationsDir);
 
       const newMessages = conversationId
-        ? callOpts.prompt.slice(processedMessages)
+        ? boundTurnPrompt(callOpts.prompt)
         : callOpts.prompt;
 
       const prompt = flattenPrompt(newMessages);
@@ -204,7 +208,6 @@ function buildLanguageModel(
       await store.set(
         sessionId,
         conversationId,
-        conversationId ? callOpts.prompt.length : 0,
         conversationId ? result.stdout : "",
       );
 
