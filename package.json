@@ -29,7 +29,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "bun test"
+    "test": "bun test",
+    "test:e2e": "bun run build && bun tests/e2e/opencode.ts"
   },
   "peerDependencies": {
     "@ai-sdk/provider": "^3.0.0"
@@ -41,8 +42,10 @@
   },
   "devDependencies": {
     "@ai-sdk/provider": "^3.0.0",
-    "@opencode-ai/plugin": "^1.15.12",
+    "@opencode-ai/plugin": "1.18.18",
+    "@opencode-ai/sdk": "1.18.18",
     "@types/bun": "latest",
+    "opencode-ai": "1.18.18",
     "typescript": "^5.8.0"
   },
   "dependencies": {
