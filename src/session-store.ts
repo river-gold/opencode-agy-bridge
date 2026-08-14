@@ -19,15 +19,16 @@ interface LockPayload {
   pid: number;
 }
 
-export interface AcquireLockOptions {
-  staleTimeoutMs?: number;
-  heartbeatIntervalMs?: number;
-  isAlive?: (pid: number) => boolean;
+interface LockIdentity {
+  token: string;
+  dev: number;
+  ino: number;
 }
 
-export type LockRelease = (() => Promise<void>) & {
-  stopHeartbeat: () => void;
-};
+export interface AcquireLockOptions {
+  staleTimeoutMs?: number;
+  isAlive?: (pid: number) => boolean;
+}
 
 const DEFAULT_STALE_TIMEOUT_MS = 30_000;
 
@@ -77,17 +78,10 @@ function parseLock(raw: string): LockPayload | null {
   }
 }
 
-function heartbeatInterval(options: AcquireLockOptions, staleTimeoutMs: number): number {
-  if (options.heartbeatIntervalMs !== undefined) {
-    return options.heartbeatIntervalMs;
-  }
-  return Math.max(1, Math.floor((staleTimeoutMs || DEFAULT_STALE_TIMEOUT_MS) / 3));
-}
-
-async function createLockFile(lockPath: string, token: string): Promise<FileHandle | "exists"> {
+async function createLockFile(lockPath: string, token: string): Promise<LockIdentity | "exists"> {
   let fh: FileHandle;
   try {
-    fh = await open(lockPath, "wx+");
+    fh = await open(lockPath, "wx");
   } catch (error) {
     if (errCode(error) === "EEXIST") {
       return "exists";
@@ -96,19 +90,14 @@ async function createLockFile(lockPath: string, token: string): Promise<FileHand
   }
   try {
     await fh.writeFile(JSON.stringify({ token, pid: process.pid }));
-    return fh;
+    const info = await fh.stat();
+    await fh.close().catch(() => {});
+    return { token, dev: info.dev, ino: info.ino };
   } catch (error) {
     await unlink(lockPath).catch(() => {});
     await fh.close().catch(() => {});
     throw error;
   }
-}
-
-async function readHandle(fh: FileHandle): Promise<string> {
-  const info = await fh.stat();
-  const buf = Buffer.alloc(info.size);
-  const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-  return buf.subarray(0, bytesRead).toString("utf-8");
 }
 
 async function maybeStealStaleLock(
@@ -117,13 +106,11 @@ async function maybeStealStaleLock(
   isAlive: (pid: number) => boolean,
 ): Promise<void> {
   try {
-    const raw = await readFile(lockPath, "utf-8");
-    const parsed = parseLock(raw);
+    const parsed = parseLock(await readFile(lockPath, "utf-8"));
     if (parsed) {
-      if (isAlive(parsed.pid)) {
-        return;
+      if (!isAlive(parsed.pid)) {
+        await unlink(lockPath);
       }
-      await unlink(lockPath);
       return;
     }
     const stats = await stat(lockPath);
@@ -135,86 +122,37 @@ async function maybeStealStaleLock(
   }
 }
 
-function holdLock(
-  lockPath: string,
-  fh: FileHandle,
-  token: string,
-  heartbeatIntervalMs: number,
-): LockRelease {
-  let stopped = false;
-  let beats: Promise<void> = Promise.resolve();
-
-  const runBeat = async () => {
-    if (stopped) {
-      return;
-    }
+function releaseLock(lockPath: string, identity: LockIdentity): () => Promise<void> {
+  return async () => {
     try {
-      await fh.utimes(new Date(), new Date());
-    } catch {
-      return;
-    }
-  };
-
-  const enqueueBeat = () => {
-    beats = beats.then(runBeat, runBeat);
-  };
-
-  const heartbeat = setInterval(enqueueBeat, heartbeatIntervalMs);
-  heartbeat.unref();
-
-  const stopHeartbeat = () => {
-    stopped = true;
-    clearInterval(heartbeat);
-  };
-
-  const drainBeats = async () => {
-    stopHeartbeat();
-    for (;;) {
-      const current = beats;
-      await current;
-      if (beats === current) {
-        break;
-      }
-    }
-  };
-
-  const release = async () => {
-    await drainBeats();
-    try {
-      const handleStat = await fh.stat();
       const pathStat = await stat(lockPath);
-      if (handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino) {
+      if (pathStat.dev !== identity.dev || pathStat.ino !== identity.ino) {
         return;
       }
-      const current = parseLock(await readHandle(fh));
-      if (!current || current.token !== token) {
+      const current = parseLock(await readFile(lockPath, "utf-8"));
+      if (!current || current.token !== identity.token) {
         return;
       }
       await unlink(lockPath);
     } catch {
       return;
-    } finally {
-      await fh.close().catch(() => {});
     }
   };
-  release.stopHeartbeat = stopHeartbeat;
-  return release;
 }
 
 export async function tryAcquireLock(
   lockPath: string,
   options: AcquireLockOptions = {},
-): Promise<LockRelease | null> {
+): Promise<(() => Promise<void>) | null> {
   const staleTimeoutMs = options.staleTimeoutMs ?? DEFAULT_STALE_TIMEOUT_MS;
   const isAlive = options.isAlive ?? defaultIsAlive;
-  const intervalMs = heartbeatInterval(options, staleTimeoutMs);
   const token = randomUUID();
 
   await mkdir(dirname(lockPath), { recursive: true });
 
   const first = await createLockFile(lockPath, token);
   if (first !== "exists") {
-    return holdLock(lockPath, first, token, intervalMs);
+    return releaseLock(lockPath, first);
   }
 
   await maybeStealStaleLock(lockPath, staleTimeoutMs, isAlive);
@@ -223,13 +161,13 @@ export async function tryAcquireLock(
   if (second === "exists") {
     return null;
   }
-  return holdLock(lockPath, second, token, intervalMs);
+  return releaseLock(lockPath, second);
 }
 
-export async function acquireLock(
+async function acquireLock(
   lockPath: string,
   options: AcquireLockOptions = {},
-): Promise<LockRelease> {
+): Promise<() => Promise<void>> {
   let backoff = 1;
   const maxBackoff = 500;
   for (;;) {
@@ -253,7 +191,7 @@ export class SessionStore {
    * Acquires a global lock for the bind-while-running phase.
    * Prevents concurrent agy instances from creating ambiguous .pb files.
    */
-  static acquireBindingLock(): Promise<LockRelease> {
+  static acquireBindingLock(): Promise<() => Promise<void>> {
     return acquireLock(defaultBindingLockPath());
   }
 

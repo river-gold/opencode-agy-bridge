@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { acquireLock, SessionStore, tryAcquireLock } from "../src/session-store";
+import { SessionStore, tryAcquireLock } from "../src/session-store";
 
 describe("SessionStore", () => {
   let dir: string;
@@ -100,38 +100,42 @@ describe("SessionStore", () => {
     await release2();
   }, 40000);
 
-  test("live owner is not stolen even when mtime is already stale", async () => {
+  test("live owner is not stolen regardless of lock age", async () => {
     const lockPath = join(dir, "held.lock");
     const live = new Set([process.pid]);
-    const opts = {
-      staleTimeoutMs: 0,
-      heartbeatIntervalMs: 60_000,
-      isAlive: (pid: number) => live.has(pid),
-    };
-    const release1 = await acquireLock(lockPath, opts);
+    const opts = { staleTimeoutMs: 0, isAlive: (pid: number) => live.has(pid) };
+    const release1 = await tryAcquireLock(lockPath, opts);
+    expect(release1).not.toBeNull();
     expect(await tryAcquireLock(lockPath, opts)).toBeNull();
-    await release1();
+    await release1!();
   });
 
   test("dead owner is stolen and prior release does not drop the successor", async () => {
     const lockPath = join(dir, "owner.lock");
     const live = new Set([process.pid]);
-    const opts = {
-      staleTimeoutMs: 0,
-      heartbeatIntervalMs: 60_000,
-      isAlive: (pid: number) => live.has(pid),
-    };
-    const release1 = await acquireLock(lockPath, opts);
-    release1.stopHeartbeat();
+    const opts = { staleTimeoutMs: 0, isAlive: (pid: number) => live.has(pid) };
+    const release1 = await tryAcquireLock(lockPath, opts);
+    expect(release1).not.toBeNull();
     live.delete(process.pid);
 
     const release2 = await tryAcquireLock(lockPath, opts);
     expect(release2).not.toBeNull();
 
-    await release1();
+    await release1!();
     await access(lockPath);
 
     await release2!();
     await expect(access(lockPath)).rejects.toThrow();
+  });
+
+  test("malformed lock is recoverable only after stale timeout", async () => {
+    const lockPath = join(dir, "bad.lock");
+    await writeFile(lockPath, "not-json");
+    expect(await tryAcquireLock(lockPath, { staleTimeoutMs: 30_000 })).toBeNull();
+
+    await utimes(lockPath, new Date(0), new Date(0));
+    const release = await tryAcquireLock(lockPath, { staleTimeoutMs: 30_000 });
+    expect(release).not.toBeNull();
+    await release!();
   });
 });
