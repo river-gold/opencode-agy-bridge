@@ -6,3 +6,4 @@ node_modules/
 
 # Temporary test output files
 *.txt
+.idea
