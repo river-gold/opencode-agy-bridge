@@ -201,4 +201,128 @@ exit 0
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  test("emits repeated incremental chunks correctly without dropping identical text", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"init","conversation_id":"conv-repeat"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"ha"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"ha"}'
+printf '%s\\n' '{"event":"step_update","status":"DONE","step_type":"agent_response","text_delta":"haha"}'
+printf '%s\\n' '{"event":"result","status":"SUCCESS","response":"haha","conversation_id":"conv-repeat"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const texts: string[] = [];
+      const result = await runAgyStream(
+        {
+          binary: mockBinary,
+          prompt: "hi",
+          cwd: tmp,
+          timeoutMs: 5000,
+        },
+        (event) => {
+          if (event.type === "text") {
+            texts.push(event.text);
+          }
+        },
+      );
+
+      expect(texts).toEqual(["ha", "ha"]);
+      expect(texts.join("")).toBe("haha");
+      expect(result.stdout).toBe("haha");
+      expect(result.conversationId).toBe("conv-repeat");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("appends missing suffix from DONE snapshot", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"init","conversation_id":"conv-suffix"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"Hel"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"lo "}'
+printf '%s\\n' '{"event":"step_update","status":"DONE","step_type":"agent_response","text_delta":"Hello World"}'
+printf '%s\\n' '{"event":"result","status":"SUCCESS","response":"Hello World","conversation_id":"conv-suffix"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const texts: string[] = [];
+      const result = await runAgyStream(
+        {
+          binary: mockBinary,
+          prompt: "hi",
+          cwd: tmp,
+          timeoutMs: 5000,
+        },
+        (event) => {
+          if (event.type === "text") {
+            texts.push(event.text);
+          }
+        },
+      );
+
+      expect(texts).toEqual(["Hel", "lo ", "World"]);
+      expect(texts.join("")).toBe("Hello World");
+      expect(result.stdout).toBe("Hello World");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("handles nested step_update shape", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"step_update","step_update":{"status":"ACTIVE","step_type":"agent_response","text_delta":"ha","conversation_id":"conv-nested"}}'
+printf '%s\\n' '{"event":"step_update","step_update":{"status":"ACTIVE","step_type":"agent_response","text_delta":"ha"}}'
+printf '%s\\n' '{"event":"step_update","step_update":{"status":"DONE","step_type":"agent_response","text_delta":"haha"}}'
+printf '%s\\n' '{"event":"result","status":"SUCCESS","response":"haha"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const texts: string[] = [];
+      const result = await runAgyStream(
+        {
+          binary: mockBinary,
+          prompt: "hi",
+          cwd: tmp,
+          timeoutMs: 5000,
+        },
+        (event) => {
+          if (event.type === "text") {
+            texts.push(event.text);
+          }
+        },
+      );
+
+      expect(texts).toEqual(["ha", "ha"]);
+      expect(texts.join("")).toBe("haha");
+      expect(result.stdout).toBe("haha");
+      expect(result.conversationId).toBe("conv-nested");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
 });

@@ -105,24 +105,36 @@ export async function runAgyStream(
 
       if (parsed.event === "step_update") {
         const step = (parsed.step_update ?? parsed) as Record<string, unknown>;
-        if (typeof step.conversation_id === "string") {
-          conversationId = step.conversation_id;
+        const stepConvId =
+          (typeof step.conversation_id === "string" ? step.conversation_id : undefined) ??
+          (typeof parsed.conversation_id === "string" ? parsed.conversation_id : undefined);
+        if (stepConvId) {
+          conversationId = stepConvId;
           onEvent({ type: "conversation", id: conversationId });
         }
-        if (step.step_type === "agent_response" && typeof step.text_delta === "string") {
-          const incoming = step.text_delta;
-          if (!accumulatedText) {
-            onEvent({ type: "text", text: incoming });
-            accumulatedText = incoming;
-          } else if (incoming.startsWith(accumulatedText)) {
-            const extra = incoming.slice(accumulatedText.length);
-            if (extra) {
-              onEvent({ type: "text", text: extra });
+
+        const stepType =
+          (typeof step.step_type === "string" ? step.step_type : undefined) ??
+          (typeof parsed.step_type === "string" ? parsed.step_type : undefined);
+        const textDelta =
+          (typeof step.text_delta === "string" ? step.text_delta : undefined) ??
+          (typeof parsed.text_delta === "string" ? parsed.text_delta : undefined);
+        const status =
+          (typeof step.status === "string" ? step.status : undefined) ??
+          (typeof parsed.status === "string" ? parsed.status : undefined);
+
+        if (stepType === "agent_response" && typeof textDelta === "string") {
+          if (status === "DONE") {
+            if (textDelta.startsWith(accumulatedText)) {
+              const missingSuffix = textDelta.slice(accumulatedText.length);
+              if (missingSuffix) {
+                accumulatedText = textDelta;
+                onEvent({ type: "text", text: missingSuffix });
+              }
             }
-            accumulatedText = incoming;
-          } else if (!accumulatedText.endsWith(incoming)) {
-            accumulatedText += incoming;
-            onEvent({ type: "text", text: incoming });
+          } else if (textDelta) {
+            accumulatedText += textDelta;
+            onEvent({ type: "text", text: textDelta });
           }
         }
         return;
