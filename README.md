@@ -4,6 +4,8 @@
 
 An OpenCode plugin and provider that connects the `agy` CLI to OpenCode. Select and use models exposed by `agy` directly from OpenCode.
 
+This project is developed entirely through vibe coding.
+
 ## Quick Start
 
 ### Prerequisites
@@ -62,6 +64,10 @@ Point `plugin` to the built file and `npm` to the checkout directory:
   }
 }
 ```
+
+## Permissions and Security
+
+Every `agy` invocation uses `--dangerously-skip-permissions`. Changes made by `agy` and commands it executes are not mediated by OpenCode permission prompts. OpenCode system instructions, tool history, and file parts are not forwarded to `agy`. Use this plugin only in trusted workspaces and with trusted requests. This is intentional current plugin behavior.
 
 ## Models and Variants
 

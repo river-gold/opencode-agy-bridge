@@ -2,6 +2,8 @@
 
 `agy` CLI를 OpenCode의 provider로 연결하는 플러그인이다. OpenCode에서 `agy`가 제공하는 모델을 선택해 사용할 수 있다.
 
+이 프로젝트는 전적으로 vibe coding으로 개발된다.
+
 ## 빠른 시작
 
 ### 사전 조건
@@ -60,6 +62,10 @@ bun test
   }
 }
 ```
+
+## 권한과 보안
+
+모든 `agy` 호출에는 `--dangerously-skip-permissions`가 사용된다. `agy`가 변경한 파일과 실행하는 명령은 OpenCode의 권한 확인 프롬프트를 거치지 않는다. OpenCode의 시스템 지침, 도구 기록, 파일 파트는 `agy`로 전달되지 않는다. 신뢰할 수 있는 작업 공간과 신뢰할 수 있는 요청에서만 이 플러그인을 사용한다. 이는 현재 플러그인의 의도된 동작이다.
 
 ## 모델과 variant
 

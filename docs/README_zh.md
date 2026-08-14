@@ -2,6 +2,8 @@
 
 将 `agy` CLI 接入 OpenCode 的插件和 provider。你可以直接在 OpenCode 中选择并使用 `agy` 提供的模型。
 
+本项目完全通过 vibe coding 开发。
+
 ## 快速开始
 
 ### 前置条件
@@ -60,6 +62,10 @@ bun test
   }
 }
 ```
+
+## 权限与安全
+
+每次调用 `agy` 都会使用 `--dangerously-skip-permissions`。`agy` 对文件的修改和执行的命令不会经过 OpenCode 权限提示的介入。OpenCode 的系统指令、工具历史记录和文件片段不会转发给 `agy`。请仅在可信的工作区中、针对可信的请求使用此插件。这是当前插件有意采用的行为。
 
 ## 模型和 variant
 
