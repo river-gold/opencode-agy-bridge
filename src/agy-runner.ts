@@ -165,38 +165,116 @@ export async function runAgyStream(
     });
     child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("agy timed out"));
+    let settled = false;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    let killFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = undefined;
+      }
+      if (killFallbackTimer) {
+        clearTimeout(killFallbackTimer);
+        killFallbackTimer = undefined;
+      }
+      if (input.abortSignal && onAbort) {
+        input.abortSignal.removeEventListener("abort", onAbort);
+      }
+    };
+
+    const settleResolve = (value: RunAgyResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const settleReject = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+
+    const createAbortError = (reason?: unknown): Error => {
+      if (reason instanceof Error) {
+        return reason;
+      }
+      if (typeof DOMException !== "undefined") {
+        return new DOMException(
+          typeof reason === "string" ? reason : "The operation was aborted",
+          "AbortError",
+        );
+      }
+      const err = new Error(
+        typeof reason === "string" ? reason : "The operation was aborted",
+      );
+      err.name = "AbortError";
+      return err;
+    };
+
+    const killChild = () => {
+      if (child.killed || child.exitCode !== null) {
+        return;
+      }
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+      if (!killFallbackTimer) {
+        killFallbackTimer = setTimeout(() => {
+          if (!child.killed && child.exitCode === null) {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // ignore
+            }
+          }
+        }, 2000);
+        killFallbackTimer.unref?.();
+      }
+    };
+
+    const onAbort = () => {
+      killChild();
+      settleReject(createAbortError(input.abortSignal?.reason));
+    };
+
+    timeoutTimer = setTimeout(() => {
+      killChild();
+      settleReject(new Error("agy timed out"));
     }, timeoutMs);
 
-    const abort = () => child.kill("SIGTERM");
-    input.abortSignal?.addEventListener("abort", abort, { once: true });
+    input.abortSignal?.addEventListener("abort", onAbort, { once: true });
     if (input.abortSignal?.aborted) {
-      child.kill("SIGTERM");
+      killChild();
+      settleReject(createAbortError(input.abortSignal.reason));
+      return;
     }
 
     child.on("close", (code) => {
-      clearTimeout(timer);
-      input.abortSignal?.removeEventListener("abort", abort);
+      if (settled) return;
       processLine(stdoutBuffer);
 
       const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       const exitCode = code ?? 1;
 
-      if (resultStatus && resultStatus !== "SUCCESS" && resultError) {
-        reject(new Error(resultError));
+      if (exitCode !== 0) {
+        const msg = resultError?.trim() || stderr.trim() || `agy exited with status ${exitCode}`;
+        settleReject(new Error(msg));
         return;
       }
 
-      if (exitCode !== 0 && !stdout.trim()) {
-        const msg = stderr.trim() || `agy exited with status ${exitCode}`;
-        reject(new Error(msg));
+      if (resultStatus && resultStatus !== "SUCCESS") {
+        const msg = resultError?.trim() || `agy failed with status ${resultStatus}`;
+        settleReject(new Error(msg));
         return;
       }
 
-      resolve({
+      settleResolve({
         stdout: accumulatedText || resultResponse || (!sawValidEvent ? stdout : ""),
         stderr,
         exitCode,
@@ -206,9 +284,7 @@ export async function runAgyStream(
     });
 
     child.on("error", (err) => {
-      clearTimeout(timer);
-      input.abortSignal?.removeEventListener("abort", abort);
-      reject(new Error(`failed to spawn agy: ${err.message}`));
+      settleReject(new Error(`failed to spawn agy: ${err.message}`));
     });
   });
 }

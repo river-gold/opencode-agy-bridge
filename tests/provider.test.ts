@@ -205,4 +205,97 @@ exit 0
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  test("doGenerate rejects and does not commit state on non-zero exit with partial stdout", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+    const stateFile = join(tmp, "sessions.json");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"init","conversation_id":"conv-fail"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"Partial text before crash"}'
+echo "fatal crash" >&2
+exit 1
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const provider = createAgyProvider({
+        binary: mockBinary,
+        conversationsDir: tmp,
+        stateFile,
+      });
+      const model = provider("gemini-3.6-flash");
+      const sessionId = "session-partial-fail";
+
+      await expect(
+        model.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+          headers: { "x-agy-session-id": sessionId },
+        }),
+      ).rejects.toThrow("fatal crash");
+
+      const { SessionStore } = await import("../src/session-store.js");
+      const store = new SessionStore(stateFile);
+      const entry = await store.getEntry(sessionId);
+      expect(entry).toBeNull();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("doGenerate rejects and does not commit state when aborted", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+    const stateFile = join(tmp, "sessions.json");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+sleep 10
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const provider = createAgyProvider({
+        binary: mockBinary,
+        conversationsDir: tmp,
+        stateFile,
+      });
+      const model = provider("gemini-3.6-flash");
+      const sessionId = "session-abort";
+      const ac = new AbortController();
+
+      const promise = model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        headers: { "x-agy-session-id": sessionId },
+        abortSignal: ac.signal,
+      });
+
+      setTimeout(() => ac.abort(), 50);
+
+      let caughtErr: unknown;
+      try {
+        await promise;
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      expect(caughtErr).toBeDefined();
+      expect((caughtErr as Error).name).toBe("AbortError");
+
+      const { SessionStore } = await import("../src/session-store.js");
+      const store = new SessionStore(stateFile);
+      const entry = await store.getEntry(sessionId);
+      expect(entry).toBeNull();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
 });
+
