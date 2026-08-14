@@ -20,7 +20,7 @@ exit 0
     await chmod(mockBinary, 0o755);
 
     try {
-      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp });
+      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp, stateFile: join(tmp, "sessions.json") });
       const model = provider("gemini-3.6-flash");
       const result = await model.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
@@ -48,7 +48,7 @@ exit 0
     await chmod(mockBinary, 0o755);
 
     try {
-      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp });
+      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp, stateFile: join(tmp, "sessions.json") });
       const model = provider("gemini-3.6-flash:high");
       const result = await model.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
@@ -79,6 +79,7 @@ exit 0
       const provider = createAgyProvider({
         binary: mockBinary,
         conversationsDir: tmp,
+        stateFile: join(tmp, "sessions.json"),
         model: "gemini-3.1-pro",
         effort: "low",
       });
@@ -109,7 +110,7 @@ exit 0
     await chmod(mockBinary, 0o755);
 
     try {
-      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp });
+      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp, stateFile: join(tmp, "sessions.json") });
       const model = provider("gemini-3.6-flash");
       const result = await model.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
@@ -138,7 +139,7 @@ exit 0
     await chmod(mockBinary, 0o755);
 
     try {
-      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp });
+      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp, stateFile: join(tmp, "sessions.json") });
       const model = provider("gemini-3.7-flash");
       const result = await model.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
@@ -275,7 +276,7 @@ exit 0
     await chmod(mockBinary, 0o755);
 
     try {
-      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp });
+      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp, stateFile: join(tmp, "sessions.json") });
       const model = provider("gemini-3.6-flash");
       const { stream } = await model.doStream({
         prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],

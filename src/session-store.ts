@@ -120,12 +120,55 @@ export class SessionStore {
   }
 
   private async loadStoreUnlocked(): Promise<StoreFile> {
+    let raw: string;
     try {
-      const raw = await readFile(this.stateFile, "utf-8");
-      const parsed = JSON.parse(raw);
-      return { sessions: parsed.sessions ?? {} };
-    } catch {
-      return { sessions: {} };
+      raw = await readFile(this.stateFile, "utf-8");
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return { sessions: {} };
+      }
+      throw err;
     }
+
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      typeof (parsed as { sessions?: unknown }).sessions !== "object" ||
+      (parsed as { sessions?: unknown }).sessions === null ||
+      Array.isArray((parsed as { sessions?: unknown }).sessions)
+    ) {
+      throw new Error("Invalid session store state format");
+    }
+
+    const sessions = (parsed as { sessions: Record<string, unknown> }).sessions;
+    for (const [key, entry] of Object.entries(sessions)) {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        Array.isArray(entry)
+      ) {
+        throw new Error(`Invalid session store state format: entry "${key}" must be an object`);
+      }
+      const { conversationId, processedMessages, prevOutput } = entry as Record<string, unknown>;
+      if (typeof conversationId !== "string" && conversationId !== null) {
+        throw new Error(`Invalid session store state format: entry "${key}" conversationId must be a string or null`);
+      }
+      if (
+        typeof processedMessages !== "number" ||
+        !Number.isInteger(processedMessages) ||
+        processedMessages < 0
+      ) {
+        throw new Error(
+          `Invalid session store state format: entry "${key}" processedMessages must be a non-negative integer`,
+        );
+      }
+      if (typeof prevOutput !== "string") {
+        throw new Error(`Invalid session store state format: entry "${key}" prevOutput must be a string`);
+      }
+    }
+
+    return { sessions: sessions as Record<string, StoreEntry> };
   }
 }

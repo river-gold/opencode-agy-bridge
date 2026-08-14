@@ -118,4 +118,73 @@ describe("SessionStore", () => {
     expect(release2).toBeInstanceOf(Function);
     await release2();
   }, 40000);
+
+  test("getEntry rejects on corrupt JSON and leaves file unchanged", async () => {
+    const corruptContent = "{\ninvalid json syntax...";
+    await writeFile(stateFile, corruptContent, "utf-8");
+
+    const store = new SessionStore(stateFile);
+    await expect(store.getEntry("sess-1")).rejects.toThrow();
+
+    const onDisk = await readFile(stateFile, "utf-8");
+    expect(onDisk).toBe(corruptContent);
+  });
+
+  test("set rejects on corrupt JSON and leaves file unchanged", async () => {
+    const corruptContent = "{\ninvalid json syntax...";
+    await writeFile(stateFile, corruptContent, "utf-8");
+
+    const store = new SessionStore(stateFile);
+    await expect(store.set("sess-1", "conv-abc", 1)).rejects.toThrow();
+
+    const onDisk = await readFile(stateFile, "utf-8");
+    expect(onDisk).toBe(corruptContent);
+  });
+
+  test("getEntry and set reject on invalid persisted shape and leave file unchanged", async () => {
+    const invalidShapes = [
+      "[]",
+      JSON.stringify({ notSessions: {} }),
+      JSON.stringify({ sessions: "not-an-object" }),
+      JSON.stringify({ sessions: null }),
+      JSON.stringify({ sessions: [1, 2, 3] }),
+    ];
+
+    for (const invalidContent of invalidShapes) {
+      await writeFile(stateFile, invalidContent, "utf-8");
+
+      const store = new SessionStore(stateFile);
+      await expect(store.getEntry("sess-1")).rejects.toThrow("Invalid session store state format");
+      await expect(store.set("sess-1", "conv-abc", 1)).rejects.toThrow("Invalid session store state format");
+
+      const onDisk = await readFile(stateFile, "utf-8");
+      expect(onDisk).toBe(invalidContent);
+    }
+  });
+
+  test("getEntry and set reject on malformed session entries and leave file unchanged", async () => {
+    const malformedEntries = [
+      { s1: "not-an-object" },
+      { s1: null },
+      { s1: [1, 2] },
+      { s1: { conversationId: 123, processedMessages: 0, prevOutput: "" } },
+      { s1: { conversationId: "conv-1", processedMessages: -1, prevOutput: "" } },
+      { s1: { conversationId: "conv-1", processedMessages: 1.5, prevOutput: "" } },
+      { s1: { conversationId: "conv-1", processedMessages: "0", prevOutput: "" } },
+      { s1: { conversationId: "conv-1", processedMessages: 0, prevOutput: null } },
+      { s1: { conversationId: "conv-1", processedMessages: 0, prevOutput: 42 } },
+    ];
+
+    for (const sessions of malformedEntries) {
+      const invalidContent = JSON.stringify({ sessions });
+      await writeFile(stateFile, invalidContent, "utf-8");
+
+      const store = new SessionStore(stateFile);
+      await expect(store.getEntry("s1")).rejects.toThrow("Invalid session store state format");
+      await expect(store.set("s2", "conv-2", 0)).rejects.toThrow("Invalid session store state format");
+
+      const onDisk = await readFile(stateFile, "utf-8");
+      expect(onDisk).toBe(invalidContent);
+    }
+  });
 });
