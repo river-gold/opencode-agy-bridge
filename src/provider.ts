@@ -21,6 +21,7 @@ export interface AgyProviderOptions {
   timeoutMs?: number;
   model?: string;
   effort?: string;
+  cwd?: string;
 }
 
 function parseModelAndEffort(rawModel?: string, existingEffort?: string): { model?: string; effort?: string } {
@@ -152,7 +153,7 @@ function buildLanguageModel(
       const result = await runAgyStream(
         {
           prompt,
-          cwd: process.cwd(),
+          cwd: opts.cwd ?? process.cwd(),
           conversationId: conversationId ?? undefined,
           model,
           effort,
