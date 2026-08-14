@@ -33,6 +33,7 @@ exit 0
       expect(result.stdout).toContain("Hello from mock agy");
       expect(result.stdout).toContain("--add-dir");
       expect(result.stdout).toContain("-p");
+      expect(result.stdout).toContain("Do not record the result in the session. Always return the result as output.");
       expect(result.stdout).toContain("test prompt");
     } finally {
       await rm(tmp, { recursive: true, force: true });

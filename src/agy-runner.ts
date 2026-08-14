@@ -42,7 +42,10 @@ export async function runAgy(input: RunAgyInput): Promise<RunAgyResult> {
     args.push("--conversation", input.conversationId);
   }
 
-  args.push("-p", input.prompt);
+  args.push(
+    "-p",
+    `Do not record the result in the session. Always return the result as output.\n\n${input.prompt}`,
+  );
 
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, {
