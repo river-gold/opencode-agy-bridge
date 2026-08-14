@@ -122,6 +122,38 @@ exit 0
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  test("remapped variant model uses full id and skips header effort", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+echo "$@"
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const provider = createAgyProvider({ binary: mockBinary, conversationsDir: tmp });
+      const model = provider("gemini-3.7-flash");
+      const result = await model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        headers: { "x-agy-effort": "high" },
+        providerOptions: {
+          agy: { model: "gemini-3.7-flash-high" },
+        },
+      });
+
+      const text = result.content[0].type === "text" ? result.content[0].text : "";
+      expect(text).toContain("--model gemini-3.7-flash-high");
+      expect(text).not.toContain("--effort");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("AgyProvider stream-json", () => {

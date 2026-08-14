@@ -2,10 +2,25 @@ import { spawn } from "node:child_process";
 
 export interface DiscoveredAgyModel {
   name: string;
+  variants?: Record<string, { model: string }>;
+}
+
+function splitLastHyphen(id: string): { base: string; suffix: string } | null {
+  const i = id.lastIndexOf("-");
+  if (i <= 0 || i === id.length - 1) return null;
+  return { base: id.slice(0, i), suffix: id.slice(i + 1) };
+}
+
+function stripSuffixLabel(label: string, suffix: string): string {
+  const end = `(${suffix})`;
+  if (label.toLowerCase().endsWith(end.toLowerCase())) {
+    return label.slice(0, label.length - end.length).trim();
+  }
+  return label;
 }
 
 export function parseAgyModels(output: string): Record<string, DiscoveredAgyModel> {
-  const models: Record<string, DiscoveredAgyModel> = {};
+  const rows: { id: string; label: string }[] = [];
   const lines = output.split("\n");
 
   for (const raw of lines) {
@@ -16,8 +31,32 @@ export function parseAgyModels(output: string): Record<string, DiscoveredAgyMode
     const id = (tab >= 0 ? line.slice(0, tab) : line.split(/\s{2,}/)[0] ?? "").trim();
     const label = (tab >= 0 ? line.slice(tab + 1) : line.split(/\s{2,}/)[1] ?? id).trim();
     if (!id) continue;
+    rows.push({ id, label: label || id });
+  }
 
-    models[id] = { name: label || id };
+  const baseCount = new Map<string, number>();
+  for (const row of rows) {
+    const split = splitLastHyphen(row.id);
+    if (!split) continue;
+    baseCount.set(split.base, (baseCount.get(split.base) ?? 0) + 1);
+  }
+
+  const models: Record<string, DiscoveredAgyModel> = {};
+
+  for (const row of rows) {
+    const split = splitLastHyphen(row.id);
+    if (split && (baseCount.get(split.base) ?? 0) >= 2) {
+      const existing = models[split.base] ?? {
+        name: stripSuffixLabel(row.label, split.suffix),
+        variants: {},
+      };
+      existing.variants ??= {};
+      existing.variants[split.suffix] = { model: row.id };
+      models[split.base] = existing;
+      continue;
+    }
+
+    models[row.id] = { name: row.label };
   }
 
   return models;

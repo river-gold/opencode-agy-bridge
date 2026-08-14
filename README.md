@@ -66,7 +66,7 @@ Then set `"plugin"` to the local `dist/plugin.js` path and `"npm"` to the checko
 
 ## Configuration
 
-The plugin runs `agy models` on startup and fills `provider.agy.models` with those ids as-is (including `-high` / `-medium` / `-low`). Entries you set in config override the discovered ones and may add `variants`.
+The plugin runs `agy models` on startup. If two or more ids share a prefix before the last `-`, they become one model with those last tokens as variants. A lone id is left as-is. Config `models` override discovered entries and may add `variants`.
 
 Model IDs are forwarded to `agy --model`. A cosmetic id such as `antigravity` is sent to `agy` as-is and will fail if that id is not a real model.
 
@@ -86,8 +86,8 @@ Model IDs are forwarded to `agy --model`. A cosmetic id such as `antigravity` is
 
 Resolution order:
 
-- **model:** `providerOptions.agy.model` → model factory option → OpenCode `/model` id → `options.model`
-- **effort:** `providerOptions.agy.effort` → `x-agy-effort` header → model factory option → `options.effort`. Not sent if unset.
+- **model:** `providerOptions.agy.model` → model factory option → OpenCode `/model` id → `options.model`. Auto-grouped variants set `providerOptions.agy.model` to the original full id.
+- **effort:** `providerOptions.agy.effort` → `x-agy-effort` header → model factory option → `options.effort`. Not sent if a remapped full model id is used, or if unset.
 
 The plugin copies OpenCode session id and effort into headers (`x-agy-session-id`, `x-agy-effort`). Effort is taken from, in order: chat **variant**, then `model.options.reasoningEffort` / `effort`, then the same fields on the provider.
 
@@ -103,7 +103,7 @@ If the selected model id contains `:`, it is split into `--model` and `--effort`
 - **Conversation binding** — infers `conversation_id` by diffing `agy` `.pb` files so multi-turn chat works.
 - **Global binding lock** — serializes first-turn `.pb` discovery across concurrent OpenCode instances.
 - **stream-json** — `agy --output-format stream-json` fragments are forwarded as OpenCode `text-delta`.
-- **Auto models** — `agy models` ids are added on startup. Config `models` override them and can declare `variants`.
+- **Auto models** — `agy models` ids are grouped by the last `-` token when that prefix appears more than once. Config `models` override them and can declare `variants`.
 
 ## Known limitations
 

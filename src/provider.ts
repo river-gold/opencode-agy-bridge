@@ -131,16 +131,20 @@ function buildLanguageModel(
       const providerAgyOpts = callOpts.providerOptions?.agy as Record<string, unknown> | undefined;
 
       const headerEffort = callOpts.headers?.["x-agy-effort"] as string | undefined;
+      const remappedModel =
+        typeof providerAgyOpts?.model === "string" ? providerAgyOpts.model : undefined;
+      const usedRemap = Boolean(remappedModel && remappedModel !== modelId);
 
-      const rawModel = (providerAgyOpts?.model as string) ??
+      const rawModel = remappedModel ??
         modelOpts?.model ??
         modelId ??
         opts.model;
-      const rawEffort =
-        (providerAgyOpts?.effort as string) ??
-        headerEffort ??
-        modelOpts?.effort ??
-        opts.effort;
+      const rawEffort = usedRemap
+        ? (typeof providerAgyOpts?.effort === "string" ? providerAgyOpts.effort : undefined)
+        : (providerAgyOpts?.effort as string) ??
+          headerEffort ??
+          modelOpts?.effort ??
+          opts.effort;
 
       const { model, effort } = parseModelAndEffort(rawModel, rawEffort);
 

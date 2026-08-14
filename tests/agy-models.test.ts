@@ -12,19 +12,36 @@ gpt-oss-120b-medium	GPT-OSS 120B (Medium)
 `;
 
 describe("parseAgyModels", () => {
-  test("keeps agy model ids including effort suffix", () => {
+  test("groups last hyphen token when the same base appears twice or more", () => {
     const models = parseAgyModels(sample);
-    expect(models["gemini-3.7-flash-high"]).toEqual({ name: "Gemini 3.7 Flash (High)" });
-    expect(models["gemini-3.7-flash-medium"]).toEqual({ name: "Gemini 3.7 Flash (Medium)" });
-    expect(models["gemini-3.7-flash-low"]).toEqual({ name: "Gemini 3.7 Flash (Low)" });
-    expect(models["gpt-oss-120b-medium"]).toEqual({ name: "GPT-OSS 120B (Medium)" });
-    expect(models["gemini-3.7-flash"]).toBeUndefined();
+    expect(models["gemini-3.7-flash"]).toEqual({
+      name: "Gemini 3.7 Flash",
+      variants: {
+        high: { model: "gemini-3.7-flash-high" },
+        medium: { model: "gemini-3.7-flash-medium" },
+        low: { model: "gemini-3.7-flash-low" },
+      },
+    });
+    expect(models["gemini-3.7-flash-high"]).toBeUndefined();
   });
 
-  test("keeps ids without effort suffix as-is", () => {
+  test("keeps a lone suffixed id as-is", () => {
     const models = parseAgyModels(sample);
-    expect(models["claude-sonnet-4-6"]).toEqual({ name: "Claude Sonnet 4.6 (Thinking)" });
+    expect(models["gemini-3.1-pro-high"]).toEqual({ name: "Gemini 3.1 Pro (High)" });
+    expect(models["gpt-oss-120b-medium"]).toEqual({ name: "GPT-OSS 120B (Medium)" });
     expect(models["claude-opus-4-6-thinking"]).toEqual({ name: "Claude Opus 4.6 (Thinking)" });
+    expect(models["claude-sonnet-4-6"]).toEqual({ name: "Claude Sonnet 4.6 (Thinking)" });
+  });
+
+  test("groups arbitrary suffixes, not only effort words", () => {
+    const models = parseAgyModels("foo-fast\tFoo (fast)\nfoo-deep\tFoo (deep)\n");
+    expect(models.foo).toEqual({
+      name: "Foo",
+      variants: {
+        fast: { model: "foo-fast" },
+        deep: { model: "foo-deep" },
+      },
+    });
   });
 
   test("parses space-aligned columns", () => {
