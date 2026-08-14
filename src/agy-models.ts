@@ -159,6 +159,9 @@ export async function applyAgyModels(
     waitRefresh?: boolean;
   },
 ): Promise<void> {
+  const configuredModels = cfg.provider?.agy?.models;
+  if (configuredModels && Object.keys(configuredModels).length > 0) return;
+
   const binary = cfg.provider?.agy?.options?.binary ?? "agy";
   const cacheFile = opts?.cacheFile ?? defaultModelCacheFile();
   const list = opts?.list ?? listAgyModels;

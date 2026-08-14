@@ -48,7 +48,7 @@ Add the plugin and provider to `~/.config/opencode/opencode.json`. OpenCode inst
 }
 ```
 
-Restart OpenCode and run `/model` → select an `agy/...` model.
+Restart OpenCode and run `/model` → select an `agy/...` model. The model list comes from `agy models` automatically.
 
 The original npm package `opencode-agy-bridge@0.2.8` is unmaintained and does not include the fixes in this fork.
 
@@ -66,7 +66,30 @@ Then set `"plugin"` to the local `dist/plugin.js` path and `"npm"` to the checko
 
 ## Configuration
 
-The plugin fills `provider.agy.models` from `agy models`. If two or more ids share a prefix before the last `-`, they become one model with those last tokens as variants. A lone id is left as-is. Config `models` override discovered entries and may add `variants`.
+Models are filled automatically from `agy models` on startup when `provider.agy.models` is omitted or empty. You do not need a `models` block for `/model` to list `agy/...` entries.
+
+If two or more ids share a prefix before the last `-`, they become one model with those last tokens as variants. A lone id is left as-is. If `models` contains at least one manual entry, automatic discovery and cache access are skipped entirely.
+
+```jsonc
+{
+  "provider": {
+    "agy": {
+      "npm": "opencode-agy-plugin",
+      "models": {
+        "gemini-3.7-flash": {
+          "name": "Gemini 3.7 Flash",
+          "variants": {
+            "high": { "model": "gemini-3.7-flash-high" },
+            "low": { "model": "gemini-3.7-flash-low" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The example above is fully manual, so only the configured model is shown. Empty variant objects (`"high": {}`) send `--effort high` with the OpenCode model id. A `model` field on the variant sends that full id as `--model` and skips `--effort`.
 
 Model discovery is cached in `~/.cache/opencode-agy-plugin/models.json` for 24 hours. A later start uses the cache immediately. If the cache is stale, the old list is still used and `agy models` refreshes the file in the background for the next restart. The first start with no cache waits on `agy models`.
 
@@ -105,7 +128,7 @@ If the selected model id contains `:`, it is split into `--model` and `--effort`
 - **Conversation binding** — infers `conversation_id` by diffing `agy` `.pb` files so multi-turn chat works.
 - **Global binding lock** — serializes first-turn `.pb` discovery across concurrent OpenCode instances.
 - **stream-json** — `agy --output-format stream-json` fragments are forwarded as OpenCode `text-delta`.
-- **Auto models** — `agy models` ids are grouped by the last `-` token when that prefix appears more than once. The list is cached for 24h in `~/.cache/opencode-agy-plugin/models.json`. Config `models` override them and can declare `variants`.
+- **Auto models** — when `models` is omitted or empty, `agy models` ids are grouped by the last `-` token when that prefix appears more than once. The list is cached for 24h in `~/.cache/opencode-agy-plugin/models.json`. Any manual model entry disables discovery and cache access.
 
 ## Known limitations
 

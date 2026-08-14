@@ -142,4 +142,45 @@ describe("model cache", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  test("skips discovery when models are configured manually", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agy-models-cache-"));
+    const cacheFile = join(dir, "models.json");
+    let listed = 0;
+    try {
+      const models = { manual: { name: "Manual" } };
+      const cfg: { provider?: Record<string, any> } = {
+        provider: { agy: { models } },
+      };
+      await applyAgyModels(cfg, {
+        cacheFile,
+        list: async () => {
+          listed += 1;
+          return { automatic: { name: "Automatic" } };
+        },
+      });
+      expect(listed).toBe(0);
+      expect(cfg.provider?.agy?.models).toBe(models);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("discovers models when configured models are empty", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agy-models-cache-"));
+    const cacheFile = join(dir, "models.json");
+    try {
+      const cfg: { provider?: Record<string, any> } = {
+        provider: { agy: { models: {} } },
+      };
+      await applyAgyModels(cfg, {
+        cacheFile,
+        now: 1,
+        list: async () => ({ automatic: { name: "Automatic" } }),
+      });
+      expect(cfg.provider?.agy?.models.automatic).toEqual({ name: "Automatic" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
