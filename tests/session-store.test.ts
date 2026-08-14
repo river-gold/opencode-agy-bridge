@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionStore } from "../src/session-store";
@@ -103,4 +103,47 @@ describe("SessionStore", () => {
     expect(release2).toBeInstanceOf(Function);
     await release2();
   }, 40000);
+
+  test("getEntry rejects on corrupt JSON and leaves file unchanged", async () => {
+    const corruptContent = "{\ninvalid json syntax...";
+    await writeFile(stateFile, corruptContent, "utf-8");
+
+    const store = new SessionStore(stateFile);
+    await expect(store.getEntry("sess-1")).rejects.toThrow();
+
+    const onDisk = await readFile(stateFile, "utf-8");
+    expect(onDisk).toBe(corruptContent);
+  });
+
+  test("set rejects on corrupt JSON and leaves file unchanged", async () => {
+    const corruptContent = "{\ninvalid json syntax...";
+    await writeFile(stateFile, corruptContent, "utf-8");
+
+    const store = new SessionStore(stateFile);
+    await expect(store.set("sess-1", "conv-abc", 1)).rejects.toThrow();
+
+    const onDisk = await readFile(stateFile, "utf-8");
+    expect(onDisk).toBe(corruptContent);
+  });
+
+  test("getEntry and set reject on invalid persisted shape and leave file unchanged", async () => {
+    const invalidShapes = [
+      "[]",
+      JSON.stringify({ notSessions: {} }),
+      JSON.stringify({ sessions: "not-an-object" }),
+      JSON.stringify({ sessions: null }),
+      JSON.stringify({ sessions: [1, 2, 3] }),
+    ];
+
+    for (const invalidContent of invalidShapes) {
+      await writeFile(stateFile, invalidContent, "utf-8");
+
+      const store = new SessionStore(stateFile);
+      await expect(store.getEntry("sess-1")).rejects.toThrow("Invalid session store state format");
+      await expect(store.set("sess-1", "conv-abc", 1)).rejects.toThrow("Invalid session store state format");
+
+      const onDisk = await readFile(stateFile, "utf-8");
+      expect(onDisk).toBe(invalidContent);
+    }
+  });
 });

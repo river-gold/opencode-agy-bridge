@@ -123,12 +123,28 @@ export class SessionStore {
   }
 
   private async loadStoreUnlocked(): Promise<StoreFile> {
+    let raw: string;
     try {
-      const raw = await readFile(this.stateFile, "utf-8");
-      const parsed = JSON.parse(raw);
-      return { sessions: parsed.sessions ?? {} };
-    } catch {
-      return { sessions: {} };
+      raw = await readFile(this.stateFile, "utf-8");
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return { sessions: {} };
+      }
+      throw err;
     }
+
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      typeof (parsed as { sessions?: unknown }).sessions !== "object" ||
+      (parsed as { sessions?: unknown }).sessions === null ||
+      Array.isArray((parsed as { sessions?: unknown }).sessions)
+    ) {
+      throw new Error("Invalid session store state format");
+    }
+
+    return { sessions: (parsed as StoreFile).sessions };
   }
 }
