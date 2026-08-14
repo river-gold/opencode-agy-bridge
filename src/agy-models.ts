@@ -1,4 +1,15 @@
 import { spawn } from "node:child_process";
+import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+export const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export interface ModelCacheFile {
+  binary: string;
+  fetchedAt: number;
+  models: Record<string, DiscoveredAgyModel>;
+}
 
 export interface DiscoveredAgyModel {
   name: string;
@@ -62,6 +73,51 @@ export function parseAgyModels(output: string): Record<string, DiscoveredAgyMode
   return models;
 }
 
+export function defaultModelCacheFile(): string {
+  return join(homedir(), ".cache", "opencode-agy-plugin", "models.json");
+}
+
+export function isModelCacheFresh(
+  cache: ModelCacheFile | null,
+  now: number,
+  ttlMs = MODEL_CACHE_TTL_MS,
+): boolean {
+  return Boolean(cache && now - cache.fetchedAt <= ttlMs);
+}
+
+export async function loadModelCache(path: string): Promise<ModelCacheFile | null> {
+  try {
+    const raw = await readFile(path, "utf-8");
+    const parsed = JSON.parse(raw) as ModelCacheFile;
+    if (!parsed || typeof parsed.fetchedAt !== "number" || !parsed.models) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveModelCache(path: string, cache: ModelCacheFile): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmpPath = path + ".tmp";
+  await writeFile(tmpPath, JSON.stringify(cache), "utf-8");
+  await rename(tmpPath, path);
+}
+
+function assignModels(
+  cfg: { provider?: Record<string, any> },
+  discovered: Record<string, DiscoveredAgyModel>,
+): void {
+  if (Object.keys(discovered).length === 0) return;
+  cfg.provider ??= {};
+  cfg.provider.agy ??= {};
+  cfg.provider.agy.npm ??= "opencode-agy-plugin";
+  cfg.provider.agy.name ??= "Google Antigravity (via agy CLI)";
+  cfg.provider.agy.models = {
+    ...discovered,
+    ...cfg.provider.agy.models,
+  };
+}
+
 export function listAgyModels(binary = "agy"): Promise<Record<string, DiscoveredAgyModel>> {
   return new Promise((resolve) => {
     const child = spawn(binary, ["models"], {
@@ -93,19 +149,39 @@ export function listAgyModels(binary = "agy"): Promise<Record<string, Discovered
   });
 }
 
-export async function applyAgyModels(cfg: {
-  provider?: Record<string, any>;
-}): Promise<void> {
+export async function applyAgyModels(
+  cfg: { provider?: Record<string, any> },
+  opts?: {
+    cacheFile?: string;
+    list?: (binary: string) => Promise<Record<string, DiscoveredAgyModel>>;
+    now?: number;
+    ttlMs?: number;
+    waitRefresh?: boolean;
+  },
+): Promise<void> {
   const binary = cfg.provider?.agy?.options?.binary ?? "agy";
-  const discovered = await listAgyModels(binary);
-  if (Object.keys(discovered).length === 0) return;
+  const cacheFile = opts?.cacheFile ?? defaultModelCacheFile();
+  const list = opts?.list ?? listAgyModels;
+  const now = opts?.now ?? Date.now();
+  const ttlMs = opts?.ttlMs ?? MODEL_CACHE_TTL_MS;
+  const cache = await loadModelCache(cacheFile);
+  const usable = cache && cache.binary === binary ? cache : null;
 
-  cfg.provider ??= {};
-  cfg.provider.agy ??= {};
-  cfg.provider.agy.npm ??= "opencode-agy-plugin";
-  cfg.provider.agy.name ??= "Google Antigravity (via agy CLI)";
-  cfg.provider.agy.models = {
-    ...discovered,
-    ...cfg.provider.agy.models,
-  };
+  if (usable && Object.keys(usable.models).length > 0) {
+    assignModels(cfg, usable.models);
+    if (isModelCacheFresh(usable, now, ttlMs)) return;
+
+    const refresh = list(binary).then(async (models) => {
+      if (Object.keys(models).length === 0) return;
+      await saveModelCache(cacheFile, { binary, fetchedAt: Date.now(), models });
+    }).catch(() => undefined);
+
+    if (opts?.waitRefresh) await refresh;
+    return;
+  }
+
+  const discovered = await list(binary);
+  if (Object.keys(discovered).length === 0) return;
+  await saveModelCache(cacheFile, { binary, fetchedAt: now, models: discovered });
+  assignModels(cfg, discovered);
 }

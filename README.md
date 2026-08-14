@@ -66,7 +66,9 @@ Then set `"plugin"` to the local `dist/plugin.js` path and `"npm"` to the checko
 
 ## Configuration
 
-The plugin runs `agy models` on startup. If two or more ids share a prefix before the last `-`, they become one model with those last tokens as variants. A lone id is left as-is. Config `models` override discovered entries and may add `variants`.
+The plugin fills `provider.agy.models` from `agy models`. If two or more ids share a prefix before the last `-`, they become one model with those last tokens as variants. A lone id is left as-is. Config `models` override discovered entries and may add `variants`.
+
+Model discovery is cached in `~/.cache/opencode-agy-plugin/models.json` for 24 hours. A later start uses the cache immediately. If the cache is stale, the old list is still used and `agy models` refreshes the file in the background for the next restart. The first start with no cache waits on `agy models`.
 
 Model IDs are forwarded to `agy --model`. A cosmetic id such as `antigravity` is sent to `agy` as-is and will fail if that id is not a real model.
 
@@ -103,7 +105,7 @@ If the selected model id contains `:`, it is split into `--model` and `--effort`
 - **Conversation binding** — infers `conversation_id` by diffing `agy` `.pb` files so multi-turn chat works.
 - **Global binding lock** — serializes first-turn `.pb` discovery across concurrent OpenCode instances.
 - **stream-json** — `agy --output-format stream-json` fragments are forwarded as OpenCode `text-delta`.
-- **Auto models** — `agy models` ids are grouped by the last `-` token when that prefix appears more than once. Config `models` override them and can declare `variants`.
+- **Auto models** — `agy models` ids are grouped by the last `-` token when that prefix appears more than once. The list is cached for 24h in `~/.cache/opencode-agy-plugin/models.json`. Config `models` override them and can declare `variants`.
 
 ## Known limitations
 
@@ -150,7 +152,7 @@ src/
 ├── plugin.ts               # OpenCode plugin hooks
 ├── provider.ts             # LanguageModelV2 implementation
 ├── agy-runner.ts           # spawn agy, capture stdout/stderr
-├── agy-models.ts           # parse `agy models` into provider.models
+├── agy-models.ts           # parse/cache `agy models` into provider.models
 ├── conversation-tracker.ts # snapshot .pb files, infer conversation_id
 ├── session-store.ts        # persist session→conversation_id mapping
 └── prompt-mapper.ts        # Vercel AI SDK prompt → plain text
