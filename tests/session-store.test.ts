@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { acquireLock, SessionStore } from "../src/session-store";
+import { acquireLock, SessionStore, tryAcquireLock } from "../src/session-store";
 
 describe("SessionStore", () => {
   let dir: string;
@@ -100,38 +100,38 @@ describe("SessionStore", () => {
     await release2();
   }, 40000);
 
-  test("heartbeat keeps a held lock from being stolen after the stale window", async () => {
+  test("live owner is not stolen even when mtime is already stale", async () => {
     const lockPath = join(dir, "held.lock");
-    const opts = { staleTimeoutMs: 40, heartbeatIntervalMs: 10 };
+    const live = new Set([process.pid]);
+    const opts = {
+      staleTimeoutMs: 0,
+      heartbeatIntervalMs: 60_000,
+      isAlive: (pid: number) => live.has(pid),
+    };
     const release1 = await acquireLock(lockPath, opts);
-
-    let stolen = false;
-    const pending = acquireLock(lockPath, opts).then((release2) => {
-      stolen = true;
-      return release2;
-    });
-
-    await new Promise((r) => setTimeout(r, 100));
-    expect(stolen).toBe(false);
-
+    expect(await tryAcquireLock(lockPath, opts)).toBeNull();
     await release1();
-    const release2 = await pending;
-    await release2();
   });
 
-  test("release removes only its own lock after a stale steal", async () => {
+  test("dead owner is stolen and prior release does not drop the successor", async () => {
     const lockPath = join(dir, "owner.lock");
-    const opts = { staleTimeoutMs: 40, heartbeatIntervalMs: 10 };
+    const live = new Set([process.pid]);
+    const opts = {
+      staleTimeoutMs: 0,
+      heartbeatIntervalMs: 60_000,
+      isAlive: (pid: number) => live.has(pid),
+    };
     const release1 = await acquireLock(lockPath, opts);
     release1.stopHeartbeat();
+    live.delete(process.pid);
 
-    await new Promise((r) => setTimeout(r, 80));
-    const release2 = await acquireLock(lockPath, opts);
+    const release2 = await tryAcquireLock(lockPath, opts);
+    expect(release2).not.toBeNull();
 
     await release1();
     await access(lockPath);
 
-    await release2();
+    await release2!();
     await expect(access(lockPath)).rejects.toThrow();
   });
 });

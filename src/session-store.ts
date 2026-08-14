@@ -1,4 +1,5 @@
-import { readFile, writeFile, rename, mkdir, open, stat, utimes, unlink } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, open, stat, unlink } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,9 +14,15 @@ interface StoreFile {
   sessions: Record<string, StoreEntry>;
 }
 
+interface LockPayload {
+  token: string;
+  pid: number;
+}
+
 export interface AcquireLockOptions {
   staleTimeoutMs?: number;
   heartbeatIntervalMs?: number;
+  isAlive?: (pid: number) => boolean;
 }
 
 export type LockRelease = (() => Promise<void>) & {
@@ -36,82 +43,203 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function tryCreateLock(lockPath: string, owner: string): Promise<boolean> {
-  try {
-    const fh = await open(lockPath, "wx");
-    await fh.writeFile(owner);
-    await fh.close();
-    return true;
-  } catch {
-    return false;
+function errCode(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code: unknown }).code;
+    return typeof code === "string" ? code : undefined;
   }
+  return undefined;
+}
+
+function defaultIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errCode(error) === "EPERM";
+  }
+}
+
+function parseLock(raw: string): LockPayload | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as LockPayload).token === "string" &&
+      typeof (parsed as LockPayload).pid === "number"
+    ) {
+      return parsed as LockPayload;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function heartbeatInterval(options: AcquireLockOptions, staleTimeoutMs: number): number {
+  if (options.heartbeatIntervalMs !== undefined) {
+    return options.heartbeatIntervalMs;
+  }
+  return Math.max(1, Math.floor((staleTimeoutMs || DEFAULT_STALE_TIMEOUT_MS) / 3));
+}
+
+async function createLockFile(lockPath: string, token: string): Promise<FileHandle | "exists"> {
+  let fh: FileHandle;
+  try {
+    fh = await open(lockPath, "wx+");
+  } catch (error) {
+    if (errCode(error) === "EEXIST") {
+      return "exists";
+    }
+    throw error;
+  }
+  try {
+    await fh.writeFile(JSON.stringify({ token, pid: process.pid }));
+    return fh;
+  } catch (error) {
+    await unlink(lockPath).catch(() => {});
+    await fh.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function readHandle(fh: FileHandle): Promise<string> {
+  const info = await fh.stat();
+  const buf = Buffer.alloc(info.size);
+  const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+  return buf.subarray(0, bytesRead).toString("utf-8");
 }
 
 async function maybeStealStaleLock(
   lockPath: string,
   staleTimeoutMs: number,
+  isAlive: (pid: number) => boolean,
 ): Promise<void> {
   try {
-    const stats = await stat(lockPath);
-    if (Date.now() - stats.mtimeMs <= staleTimeoutMs) {
+    const raw = await readFile(lockPath, "utf-8");
+    const parsed = parseLock(raw);
+    if (parsed) {
+      if (isAlive(parsed.pid)) {
+        return;
+      }
+      await unlink(lockPath);
       return;
     }
-    await unlink(lockPath);
+    const stats = await stat(lockPath);
+    if (Date.now() - stats.mtimeMs >= staleTimeoutMs) {
+      await unlink(lockPath);
+    }
   } catch {
-    // gone or already stolen
+    return;
   }
 }
 
-async function releaseOwnedLock(lockPath: string, owner: string): Promise<void> {
-  try {
-    const current = await readFile(lockPath, "utf-8");
-    if (current !== owner) {
+function holdLock(
+  lockPath: string,
+  fh: FileHandle,
+  token: string,
+  heartbeatIntervalMs: number,
+): LockRelease {
+  let stopped = false;
+  let beats: Promise<void> = Promise.resolve();
+
+  const runBeat = async () => {
+    if (stopped) {
       return;
     }
-    await unlink(lockPath);
-  } catch {
-    // best effort
+    try {
+      await fh.utimes(new Date(), new Date());
+    } catch {
+      return;
+    }
+  };
+
+  const enqueueBeat = () => {
+    beats = beats.then(runBeat, runBeat);
+  };
+
+  const heartbeat = setInterval(enqueueBeat, heartbeatIntervalMs);
+  heartbeat.unref();
+
+  const stopHeartbeat = () => {
+    stopped = true;
+    clearInterval(heartbeat);
+  };
+
+  const drainBeats = async () => {
+    stopHeartbeat();
+    for (;;) {
+      const current = beats;
+      await current;
+      if (beats === current) {
+        break;
+      }
+    }
+  };
+
+  const release = async () => {
+    await drainBeats();
+    try {
+      const handleStat = await fh.stat();
+      const pathStat = await stat(lockPath);
+      if (handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino) {
+        return;
+      }
+      const current = parseLock(await readHandle(fh));
+      if (!current || current.token !== token) {
+        return;
+      }
+      await unlink(lockPath);
+    } catch {
+      return;
+    } finally {
+      await fh.close().catch(() => {});
+    }
+  };
+  release.stopHeartbeat = stopHeartbeat;
+  return release;
+}
+
+export async function tryAcquireLock(
+  lockPath: string,
+  options: AcquireLockOptions = {},
+): Promise<LockRelease | null> {
+  const staleTimeoutMs = options.staleTimeoutMs ?? DEFAULT_STALE_TIMEOUT_MS;
+  const isAlive = options.isAlive ?? defaultIsAlive;
+  const intervalMs = heartbeatInterval(options, staleTimeoutMs);
+  const token = randomUUID();
+
+  await mkdir(dirname(lockPath), { recursive: true });
+
+  const first = await createLockFile(lockPath, token);
+  if (first !== "exists") {
+    return holdLock(lockPath, first, token, intervalMs);
   }
+
+  await maybeStealStaleLock(lockPath, staleTimeoutMs, isAlive);
+
+  const second = await createLockFile(lockPath, token);
+  if (second === "exists") {
+    return null;
+  }
+  return holdLock(lockPath, second, token, intervalMs);
 }
 
 export async function acquireLock(
   lockPath: string,
   options: AcquireLockOptions = {},
 ): Promise<LockRelease> {
-  const staleTimeoutMs = options.staleTimeoutMs ?? DEFAULT_STALE_TIMEOUT_MS;
-  const heartbeatIntervalMs =
-    options.heartbeatIntervalMs ?? Math.max(1, Math.floor(staleTimeoutMs / 3));
-
-  const lockDir = dirname(lockPath);
-  await mkdir(lockDir, { recursive: true });
-  const owner = randomUUID();
-
   let backoff = 1;
   const maxBackoff = 500;
   for (;;) {
-    if (await tryCreateLock(lockPath, owner)) {
-      break;
+    const got = await tryAcquireLock(lockPath, options);
+    if (got) {
+      return got;
     }
-    await maybeStealStaleLock(lockPath, staleTimeoutMs);
     await sleep(backoff);
     backoff = Math.min(backoff * 2, maxBackoff);
   }
-
-  const heartbeat = setInterval(() => {
-    void utimes(lockPath, new Date(), new Date()).catch(() => {});
-  }, heartbeatIntervalMs);
-  heartbeat.unref();
-
-  const stopHeartbeat = () => {
-    clearInterval(heartbeat);
-  };
-
-  const release = async () => {
-    stopHeartbeat();
-    await releaseOwnedLock(lockPath, owner);
-  };
-  release.stopHeartbeat = stopHeartbeat;
-  return release;
 }
 
 export class SessionStore {
