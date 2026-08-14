@@ -272,4 +272,121 @@ exit 0
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  test("forwards multiple current user messages after last assistant", async () => {
+    const ctx = await setupBoundProvider();
+    try {
+      await ctx.model.doGenerate({
+        prompt: [
+          { role: "user", content: [{ type: "text", text: "STALE_USER_MARKER" }] },
+          { role: "assistant", content: [{ type: "text", text: "PRIOR_ASSISTANT_MARKER" }] },
+          { role: "user", content: [{ type: "text", text: "CURRENT_USER_A" }] },
+          { role: "user", content: [{ type: "text", text: "CURRENT_USER_B" }] },
+        ],
+        headers: ctx.headers,
+      });
+
+      const log = await readFile(ctx.invocationsLog, "utf-8");
+      expect(log).toContain("CURRENT_USER_A");
+      expect(log).toContain("CURRENT_USER_B");
+      expect(log).not.toContain("STALE_USER_MARKER");
+      expect(log).not.toContain("PRIOR_ASSISTANT_MARKER");
+    } finally {
+      await rm(ctx.tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("compacted system plus current user excludes system text", async () => {
+    const ctx = await setupBoundProvider();
+    try {
+      await ctx.model.doGenerate({
+        prompt: [
+          { role: "system", content: "COMPACTED_SUMMARY_MARKER" },
+          { role: "user", content: [{ type: "text", text: "CURRENT_AFTER_COMPACT" }] },
+        ],
+        headers: ctx.headers,
+      });
+
+      const log = await readFile(ctx.invocationsLog, "utf-8");
+      expect(log).toContain("CURRENT_AFTER_COMPACT");
+      expect(log).not.toContain("COMPACTED_SUMMARY_MARKER");
+    } finally {
+      await rm(ctx.tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("fails on no-text or non-user tail without invoking agy", async () => {
+    const ctx = await setupBoundProvider();
+    try {
+      await expect(
+        ctx.model.doGenerate({
+          prompt: [
+            { role: "user", content: [{ type: "text", text: "STALE_USER_MARKER" }] },
+            { role: "assistant", content: [{ type: "text", text: "PRIOR_ASSISTANT_MARKER" }] },
+          ],
+          headers: ctx.headers,
+        }),
+      ).rejects.toThrow("agy bound turn has no current-turn text");
+
+      await expect(
+        ctx.model.doGenerate({
+          prompt: [
+            { role: "user", content: [{ type: "text", text: "STALE_USER_MARKER" }] },
+            { role: "assistant", content: [{ type: "text", text: "PRIOR_ASSISTANT_MARKER" }] },
+            { role: "user", content: [{ type: "text", text: "   " }] },
+          ],
+          headers: ctx.headers,
+        }),
+      ).rejects.toThrow("agy bound turn has no current-turn text");
+
+      const invoked = await readFile(ctx.invocationsLog, "utf-8").catch(() => "");
+      expect(invoked).toBe("");
+    } finally {
+      await rm(ctx.tmp, { recursive: true, force: true });
+    }
+  });
 });
+
+async function setupBoundProvider() {
+  const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+  const mockBinary = join(tmp, "mock-agy");
+  const invocationsLog = join(tmp, "invocations.log");
+  const stateFile = join(tmp, "sessions.json");
+
+  await writeFile(
+    mockBinary,
+    `#!/usr/bin/env bash
+printf '%s\\n' "$@" >> "${invocationsLog}"
+printf '\\n---INV---\\n' >> "${invocationsLog}"
+printf '%s\\n' '{"event":"init","conversation_id":"conv-bound-1"}'
+printf '%s\\n' '{"event":"step_update","status":"DONE","step_type":"agent_response","text_delta":"ok"}'
+printf '%s\\n' '{"event":"result","status":"SUCCESS","response":"ok","conversation_id":"conv-bound-1"}'
+exit 0
+`,
+  );
+  await chmod(mockBinary, 0o755);
+  await writeFile(
+    stateFile,
+    JSON.stringify({
+      sessions: {
+        "sess-stable-cursor": {
+          conversationId: "conv-bound-1",
+          prevOutput: "PRIOR_ASSISTANT_MARKER",
+        },
+      },
+    }),
+  );
+
+  const provider = createAgyProvider({
+    binary: mockBinary,
+    conversationsDir: tmp,
+    stateFile,
+  });
+
+  return {
+    tmp,
+    invocationsLog,
+    model: provider("gemini-3.6-flash"),
+    headers: { "x-agy-session-id": "sess-stable-cursor" },
+  };
+}

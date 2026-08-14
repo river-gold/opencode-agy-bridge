@@ -24,8 +24,14 @@ export interface AgyProviderOptions {
 }
 
 function boundTurnPrompt(prompt: LanguageModelV2CallOptions["prompt"]) {
-  const lastUser = prompt.filter((msg) => msg.role === "user").at(-1);
-  return lastUser ? [lastUser] : [];
+  const lastAssistantIdx = prompt.reduce(
+    (last, msg, i) => (msg.role === "assistant" ? i : last),
+    -1,
+  );
+  if (lastAssistantIdx === -1) {
+    return prompt.filter((msg) => msg.role !== "system");
+  }
+  return prompt.slice(lastAssistantIdx + 1);
 }
 
 function parseModelAndEffort(rawModel?: string, existingEffort?: string): { model?: string; effort?: string } {
@@ -131,6 +137,9 @@ function buildLanguageModel(
         : callOpts.prompt;
 
       const prompt = flattenPrompt(newMessages);
+      if (conversationId && !prompt.trim()) {
+        throw new Error("agy bound turn has no current-turn text");
+      }
 
       const providerAgyOpts = callOpts.providerOptions?.agy as Record<string, unknown> | undefined;
 
