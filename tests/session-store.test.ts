@@ -146,4 +146,30 @@ describe("SessionStore", () => {
       expect(onDisk).toBe(invalidContent);
     }
   });
+
+  test("getEntry and set reject on malformed session entries and leave file unchanged", async () => {
+    const malformedEntries = [
+      { s1: "not-an-object" },
+      { s1: null },
+      { s1: [1, 2] },
+      { s1: { conversationId: 123, processedMessages: 0, prevOutput: "" } },
+      { s1: { conversationId: "conv-1", processedMessages: -1, prevOutput: "" } },
+      { s1: { conversationId: "conv-1", processedMessages: 1.5, prevOutput: "" } },
+      { s1: { conversationId: "conv-1", processedMessages: "0", prevOutput: "" } },
+      { s1: { conversationId: "conv-1", processedMessages: 0, prevOutput: null } },
+      { s1: { conversationId: "conv-1", processedMessages: 0, prevOutput: 42 } },
+    ];
+
+    for (const sessions of malformedEntries) {
+      const invalidContent = JSON.stringify({ sessions });
+      await writeFile(stateFile, invalidContent, "utf-8");
+
+      const store = new SessionStore(stateFile);
+      await expect(store.getEntry("s1")).rejects.toThrow("Invalid session store state format");
+      await expect(store.set("s2", "conv-2", 0)).rejects.toThrow("Invalid session store state format");
+
+      const onDisk = await readFile(stateFile, "utf-8");
+      expect(onDisk).toBe(invalidContent);
+    }
+  });
 });

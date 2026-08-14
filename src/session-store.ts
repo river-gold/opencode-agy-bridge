@@ -145,6 +145,33 @@ export class SessionStore {
       throw new Error("Invalid session store state format");
     }
 
-    return { sessions: (parsed as StoreFile).sessions };
+    const sessions = (parsed as { sessions: Record<string, unknown> }).sessions;
+    for (const [key, entry] of Object.entries(sessions)) {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        Array.isArray(entry)
+      ) {
+        throw new Error(`Invalid session store state format: entry "${key}" must be an object`);
+      }
+      const { conversationId, processedMessages, prevOutput } = entry as Record<string, unknown>;
+      if (typeof conversationId !== "string" && conversationId !== null) {
+        throw new Error(`Invalid session store state format: entry "${key}" conversationId must be a string or null`);
+      }
+      if (
+        typeof processedMessages !== "number" ||
+        !Number.isInteger(processedMessages) ||
+        processedMessages < 0
+      ) {
+        throw new Error(
+          `Invalid session store state format: entry "${key}" processedMessages must be a non-negative integer`,
+        );
+      }
+      if (typeof prevOutput !== "string") {
+        throw new Error(`Invalid session store state format: entry "${key}" prevOutput must be a string`);
+      }
+    }
+
+    return { sessions: sessions as Record<string, StoreEntry> };
   }
 }
