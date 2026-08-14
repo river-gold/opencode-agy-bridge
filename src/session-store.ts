@@ -1,4 +1,6 @@
-import { readFile, writeFile, rename, mkdir, open, stat } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, open, stat, unlink } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -11,6 +13,24 @@ interface StoreFile {
   sessions: Record<string, StoreEntry>;
 }
 
+interface LockPayload {
+  token: string;
+  pid: number;
+}
+
+interface LockIdentity {
+  token: string;
+  dev: number;
+  ino: number;
+}
+
+export interface AcquireLockOptions {
+  staleTimeoutMs?: number;
+  isAlive?: (pid: number) => boolean;
+}
+
+const DEFAULT_STALE_TIMEOUT_MS = 30_000;
+
 function defaultStateFile(): string {
   return join(homedir(), ".opencode-agy-plugin", "sessions.json");
 }
@@ -19,44 +39,143 @@ function defaultBindingLockPath(): string {
   return join(homedir(), ".opencode-agy-plugin", "binding.lock");
 }
 
-async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
-  const lockDir = dirname(lockPath);
-  await mkdir(lockDir, { recursive: true });
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
-  const startTime = Date.now();
-  const staleTimeoutMs = 30_000;
-  let backoff = 1;
-  const maxBackoff = 500;
+function errCode(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
 
-  while (true) {
-    try {
-      const fh = await open(lockPath, "wx");
-      await fh.close();
-      return () => releaseLock(lockPath);
-    } catch {
-      if (Date.now() - startTime > staleTimeoutMs) {
-        try {
-          const stats = await stat(lockPath);
-          if (Date.now() - stats.mtimeMs > staleTimeoutMs) {
-            await releaseLock(lockPath);
-            continue;
-          }
-        } catch {
-          continue;
-        }
-      }
-      await new Promise((r) => setTimeout(r, backoff));
-      backoff = Math.min(backoff * 2, maxBackoff);
-    }
+function defaultIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errCode(error) === "EPERM";
   }
 }
 
-async function releaseLock(lockPath: string): Promise<void> {
+function parseLock(raw: string): LockPayload | null {
   try {
-    const { unlink } = await import("node:fs/promises");
-    await unlink(lockPath);
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as LockPayload).token === "string" &&
+      typeof (parsed as LockPayload).pid === "number"
+    ) {
+      return parsed as LockPayload;
+    }
+    return null;
   } catch {
-    // best effort
+    return null;
+  }
+}
+
+async function createLockFile(lockPath: string, token: string): Promise<LockIdentity | "exists"> {
+  let fh: FileHandle;
+  try {
+    fh = await open(lockPath, "wx");
+  } catch (error) {
+    if (errCode(error) === "EEXIST") {
+      return "exists";
+    }
+    throw error;
+  }
+  try {
+    await fh.writeFile(JSON.stringify({ token, pid: process.pid }));
+    const info = await fh.stat();
+    await fh.close().catch(() => {});
+    return { token, dev: info.dev, ino: info.ino };
+  } catch (error) {
+    await unlink(lockPath).catch(() => {});
+    await fh.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function maybeStealStaleLock(
+  lockPath: string,
+  staleTimeoutMs: number,
+  isAlive: (pid: number) => boolean,
+): Promise<void> {
+  try {
+    const parsed = parseLock(await readFile(lockPath, "utf-8"));
+    if (parsed) {
+      if (!isAlive(parsed.pid)) {
+        await unlink(lockPath);
+      }
+      return;
+    }
+    const stats = await stat(lockPath);
+    if (Date.now() - stats.mtimeMs >= staleTimeoutMs) {
+      await unlink(lockPath);
+    }
+  } catch {
+    return;
+  }
+}
+
+function releaseLock(lockPath: string, identity: LockIdentity): () => Promise<void> {
+  return async () => {
+    try {
+      const pathStat = await stat(lockPath);
+      if (pathStat.dev !== identity.dev || pathStat.ino !== identity.ino) {
+        return;
+      }
+      const current = parseLock(await readFile(lockPath, "utf-8"));
+      if (!current || current.token !== identity.token) {
+        return;
+      }
+      await unlink(lockPath);
+    } catch {
+      return;
+    }
+  };
+}
+
+export async function tryAcquireLock(
+  lockPath: string,
+  options: AcquireLockOptions = {},
+): Promise<(() => Promise<void>) | null> {
+  const staleTimeoutMs = options.staleTimeoutMs ?? DEFAULT_STALE_TIMEOUT_MS;
+  const isAlive = options.isAlive ?? defaultIsAlive;
+  const token = randomUUID();
+
+  await mkdir(dirname(lockPath), { recursive: true });
+
+  const first = await createLockFile(lockPath, token);
+  if (first !== "exists") {
+    return releaseLock(lockPath, first);
+  }
+
+  await maybeStealStaleLock(lockPath, staleTimeoutMs, isAlive);
+
+  const second = await createLockFile(lockPath, token);
+  if (second === "exists") {
+    return null;
+  }
+  return releaseLock(lockPath, second);
+}
+
+async function acquireLock(
+  lockPath: string,
+  options: AcquireLockOptions = {},
+): Promise<() => Promise<void>> {
+  let backoff = 1;
+  const maxBackoff = 500;
+  for (;;) {
+    const got = await tryAcquireLock(lockPath, options);
+    if (got) {
+      return got;
+    }
+    await sleep(backoff);
+    backoff = Math.min(backoff * 2, maxBackoff);
   }
 }
 
@@ -156,9 +275,10 @@ export class SessionStore {
         throw new Error(`Invalid session store state format: entry "${key}" conversationId must be a string or null`);
       }
       if (
-        typeof processedMessages !== "number" ||
-        !Number.isInteger(processedMessages) ||
-        processedMessages < 0
+        processedMessages !== undefined &&
+        (typeof processedMessages !== "number" ||
+          !Number.isInteger(processedMessages) ||
+          processedMessages < 0)
       ) {
         throw new Error(
           `Invalid session store state format: entry "${key}" processedMessages must be a non-negative integer`,

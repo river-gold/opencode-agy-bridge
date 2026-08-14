@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { SessionStore } from "../src/session-store";
+import { SessionStore, tryAcquireLock } from "../src/session-store";
 
 describe("SessionStore", () => {
   let dir: string;
@@ -103,17 +103,13 @@ describe("SessionStore", () => {
   });
 
   test("binding lock serializes concurrent access", async () => {
-    // Acquire first lock — should succeed
     const release1 = await SessionStore.acquireBindingLock();
     expect(release1).toBeInstanceOf(Function);
 
-    // Second acquisition should time out (but we release and retry)
     const release2Promise = SessionStore.acquireBindingLock();
 
-    // Release first lock
     await release1();
 
-    // Now second lock should succeed
     const release2 = await release2Promise;
     expect(release2).toBeInstanceOf(Function);
     await release2();
@@ -135,7 +131,7 @@ describe("SessionStore", () => {
     await writeFile(stateFile, corruptContent, "utf-8");
 
     const store = new SessionStore(stateFile);
-    await expect(store.set("sess-1", "conv-abc", 1)).rejects.toThrow();
+    await expect(store.set("sess-1", "conv-abc", "output")).rejects.toThrow();
 
     const onDisk = await readFile(stateFile, "utf-8");
     expect(onDisk).toBe(corruptContent);
@@ -155,7 +151,7 @@ describe("SessionStore", () => {
 
       const store = new SessionStore(stateFile);
       await expect(store.getEntry("sess-1")).rejects.toThrow("Invalid session store state format");
-      await expect(store.set("sess-1", "conv-abc", 1)).rejects.toThrow("Invalid session store state format");
+      await expect(store.set("sess-1", "conv-abc", "output")).rejects.toThrow("Invalid session store state format");
 
       const onDisk = await readFile(stateFile, "utf-8");
       expect(onDisk).toBe(invalidContent);
@@ -181,10 +177,49 @@ describe("SessionStore", () => {
 
       const store = new SessionStore(stateFile);
       await expect(store.getEntry("s1")).rejects.toThrow("Invalid session store state format");
-      await expect(store.set("s2", "conv-2", 0)).rejects.toThrow("Invalid session store state format");
+      await expect(store.set("s2", "conv-2", "output")).rejects.toThrow("Invalid session store state format");
 
       const onDisk = await readFile(stateFile, "utf-8");
       expect(onDisk).toBe(invalidContent);
     }
+  });
+
+  test("live owner is not stolen regardless of lock age", async () => {
+    const lockPath = join(dir, "held.lock");
+    const live = new Set([process.pid]);
+    const opts = { staleTimeoutMs: 0, isAlive: (pid: number) => live.has(pid) };
+    const release1 = await tryAcquireLock(lockPath, opts);
+    expect(release1).not.toBeNull();
+    expect(await tryAcquireLock(lockPath, opts)).toBeNull();
+    await release1!();
+  });
+
+  test("dead owner is stolen and prior release does not drop the successor", async () => {
+    const lockPath = join(dir, "owner.lock");
+    const live = new Set([process.pid]);
+    const opts = { staleTimeoutMs: 0, isAlive: (pid: number) => live.has(pid) };
+    const release1 = await tryAcquireLock(lockPath, opts);
+    expect(release1).not.toBeNull();
+    live.delete(process.pid);
+
+    const release2 = await tryAcquireLock(lockPath, opts);
+    expect(release2).not.toBeNull();
+
+    await release1!();
+    await access(lockPath);
+
+    await release2!();
+    await expect(access(lockPath)).rejects.toThrow();
+  });
+
+  test("malformed lock is recoverable only after stale timeout", async () => {
+    const lockPath = join(dir, "bad.lock");
+    await writeFile(lockPath, "not-json");
+    expect(await tryAcquireLock(lockPath, { staleTimeoutMs: 30_000 })).toBeNull();
+
+    await utimes(lockPath, new Date(0), new Date(0));
+    const release = await tryAcquireLock(lockPath, { staleTimeoutMs: 30_000 });
+    expect(release).not.toBeNull();
+    await release!();
   });
 });
