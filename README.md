@@ -42,11 +42,6 @@ Add the plugin and provider to `~/.config/opencode/opencode.json`. OpenCode inst
       "options": {
         "binary": "agy",
         "timeoutMs": 300000
-      },
-      "models": {
-        "gemini-3.7-flash-high": { "name": "Gemini 3.7 Flash (High)" },
-        "gemini-3.1-pro-high": { "name": "Gemini 3.1 Pro (High)" },
-        "claude-sonnet-4-6": { "name": "Claude Sonnet 4.6" }
       }
     }
   }
@@ -71,7 +66,9 @@ Then set `"plugin"` to the local `dist/plugin.js` path and `"npm"` to the checko
 
 ## Configuration
 
-Model IDs are forwarded to `agy --model`. Use IDs from `agy models` — the list changes as Antigravity updates. A cosmetic id such as `antigravity` is sent to `agy` as-is and will fail if that id is not a real model.
+The plugin runs `agy models` on startup and fills `provider.agy.models` with those ids as-is (including `-high` / `-medium` / `-low`). Entries you set in config override the discovered ones and may add `variants`.
+
+Model IDs are forwarded to `agy --model`. A cosmetic id such as `antigravity` is sent to `agy` as-is and will fail if that id is not a real model.
 
 ### Options
 
@@ -81,7 +78,7 @@ Model IDs are forwarded to `agy --model`. Use IDs from `agy models` — the list
 | `timeoutMs` | `300000` | Kill the process with `SIGTERM` after this many ms |
 | `extraArgs` | `[]` | Extra argv inserted after `--dangerously-skip-permissions` |
 | `model` | — | Fallback model id. Also accepts `model:effort` (e.g. `gemini-3.6-flash:high`) |
-| `effort` | `"high"` when a model is set | Fallback reasoning effort (`low` \| `medium` \| `high`) |
+| `effort` | — | Reasoning effort (`low` \| `medium` \| `high`). Omitted unless set. |
 | `conversationsDir` | `~/.gemini/antigravity-cli/conversations` | Directory of `agy` `.pb` conversation files |
 | `stateFile` | `~/.opencode-agy-plugin/sessions.json` | Session → conversation binding store |
 
@@ -90,7 +87,7 @@ Model IDs are forwarded to `agy --model`. Use IDs from `agy models` — the list
 Resolution order:
 
 - **model:** `providerOptions.agy.model` → model factory option → OpenCode `/model` id → `options.model`
-- **effort:** `providerOptions.agy.effort` → `x-agy-effort` header → model factory option → `options.effort` → `"high"` if a model is set
+- **effort:** `providerOptions.agy.effort` → `x-agy-effort` header → model factory option → `options.effort`. Not sent if unset.
 
 The plugin copies OpenCode session id and effort into headers (`x-agy-session-id`, `x-agy-effort`). Effort is taken from, in order: chat **variant**, then `model.options.reasoningEffort` / `effort`, then the same fields on the provider.
 
@@ -106,6 +103,7 @@ If the selected model id contains `:`, it is split into `--model` and `--effort`
 - **Conversation binding** — infers `conversation_id` by diffing `agy` `.pb` files so multi-turn chat works.
 - **Global binding lock** — serializes first-turn `.pb` discovery across concurrent OpenCode instances.
 - **stream-json** — `agy --output-format stream-json` fragments are forwarded as OpenCode `text-delta`.
+- **Auto models** — `agy models` ids are added on startup. Config `models` override them and can declare `variants`.
 
 ## Known limitations
 
@@ -152,6 +150,7 @@ src/
 ├── plugin.ts               # OpenCode plugin hooks
 ├── provider.ts             # LanguageModelV2 implementation
 ├── agy-runner.ts           # spawn agy, capture stdout/stderr
+├── agy-models.ts           # parse `agy models` into provider.models
 ├── conversation-tracker.ts # snapshot .pb files, infer conversation_id
 ├── session-store.ts        # persist session→conversation_id mapping
 └── prompt-mapper.ts        # Vercel AI SDK prompt → plain text

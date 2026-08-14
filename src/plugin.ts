@@ -1,7 +1,10 @@
 import type { Plugin } from "@opencode-ai/plugin";
+import { applyAgyModels } from "./agy-models.js";
 
 const plugin: Plugin = async () => ({
-  config: async () => {},
+  config: async (cfg) => {
+    await applyAgyModels(cfg);
+  },
   "chat.headers": async (incoming, output) => {
     if (incoming?.model?.providerID !== "agy") return;
     if (!output?.headers) return;

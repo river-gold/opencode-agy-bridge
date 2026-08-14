@@ -27,6 +27,7 @@ exit 0
 
       const text = result.content[0].type === "text" ? result.content[0].text : "";
       expect(text).toContain("--model gemini-3.6-flash");
+      expect(text).not.toContain("--effort");
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }

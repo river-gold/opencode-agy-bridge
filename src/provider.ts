@@ -33,10 +33,6 @@ function parseModelAndEffort(rawModel?: string, existingEffort?: string): { mode
     effort = effort ?? e;
   }
 
-  if (model && !effort) {
-    effort = "high";
-  }
-
   return { model, effort };
 }
 
