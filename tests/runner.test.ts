@@ -370,5 +370,68 @@ exit 0
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  test("terminates SIGTERM-ignoring child via bounded SIGKILL and suppresses late events", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+trap '' TERM
+printf '%s\\n' '{"event":"init","conversation_id":"conv-ignore-term"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"initial"}'
+sleep 10 &
+wait $!
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"late text"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const ac = new AbortController();
+      const events: string[] = [];
+      let abortTime = 0;
+
+      const promise = runAgyStream(
+        {
+          binary: mockBinary,
+          prompt: "x",
+          cwd: tmp,
+          timeoutMs: 10000,
+          abortSignal: ac.signal,
+        },
+        (event) => {
+          if (event.type === "text") {
+            events.push(event.text);
+            if (events.length === 1) {
+              abortTime = Date.now();
+              ac.abort();
+            }
+          }
+        },
+      );
+
+      let caughtErr: unknown;
+      try {
+        await promise;
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      const elapsed = Date.now() - abortTime;
+      expect(caughtErr).toBeDefined();
+      expect((caughtErr as Error).name).toBe("AbortError");
+      expect(elapsed).toBeLessThan(5000);
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(events).toEqual(["initial"]);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
 });
+
+
 
