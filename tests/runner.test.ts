@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 
 describe("agy-runner", () => {
   test("spawns a mock binary and captures stdout via stdin", async () => {
-    const tmp = await mkdtemp(join(tmpdir(), "agy-bridge-test-"));
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
     const mockBinary = join(tmp, "mock-agy");
 
     await writeFile(
@@ -40,7 +40,7 @@ exit 0
   });
 
   test("passes conversation id when provided", async () => {
-    const tmp = await mkdtemp(join(tmpdir(), "agy-bridge-test-"));
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
     const mockBinary = join(tmp, "mock-agy");
 
     await writeFile(
@@ -71,7 +71,7 @@ exit 0
   });
 
   test("rejects on non-zero exit with empty stdout", async () => {
-    const tmp = await mkdtemp(join(tmpdir(), "agy-bridge-test-"));
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
     const mockBinary = join(tmp, "mock-agy");
 
     await writeFile(
@@ -98,7 +98,7 @@ exit 1
   });
 
   test("includes extra args", async () => {
-    const tmp = await mkdtemp(join(tmpdir(), "agy-bridge-test-"));
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
     const mockBinary = join(tmp, "mock-agy");
 
     await writeFile(
@@ -127,7 +127,7 @@ exit 0
   });
 
   test("passes model and effort when provided", async () => {
-    const tmp = await mkdtemp(join(tmpdir(), "agy-bridge-test-"));
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
     const mockBinary = join(tmp, "mock-agy");
 
     await writeFile(

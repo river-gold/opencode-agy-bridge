@@ -301,7 +301,7 @@ function unsupportedEmbeddingModel(modelId: string): EmbeddingModelV2<string> {
     maxEmbeddingsPerCall: 0,
     supportsParallelCalls: false,
     doEmbed: async () => {
-      throw new Error("agy bridge does not support text embeddings");
+      throw new Error("agy plugin does not support text embeddings");
     },
   };
 }
@@ -313,7 +313,7 @@ function unsupportedImageModel(modelId: string): ImageModelV2 {
     modelId,
     maxImagesPerCall: 0,
     doGenerate: async () => {
-      throw new Error("agy bridge does not support image generation");
+      throw new Error("agy plugin does not support image generation");
     },
   };
 }

@@ -9,7 +9,7 @@ describe("SessionStore", () => {
   let stateFile: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "agy-bridge-test-"));
+    dir = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
     stateFile = join(dir, "sessions.json");
   });
 

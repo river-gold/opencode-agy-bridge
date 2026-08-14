@@ -8,7 +8,7 @@ describe("conversation-tracker", () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "agy-bridge-test-"));
+    dir = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
   });
 
   afterEach(async () => {

@@ -1,6 +1,6 @@
 # Streaming Research — Antigravity LanguageServer reverse engineering
 
-Notes from investigating real-streaming alternatives for the agy bridge.
+Notes from investigating real-streaming alternatives for the agy plugin.
 **Status:** confirmed protocol surface; not yet implemented. Kept as starting point for a future v2.
 
 ---
@@ -15,7 +15,7 @@ hosts a Connect/gRPC-JSON server on two localhost ports that DOES stream. The
 service is `exa.language_server_pb.LanguageServerService`, originally from Codeium
 (rebranded as Windsurf → Antigravity).
 
-The bridge could in principle bypass `agy --print` entirely and speak to a
+The plugin could in principle bypass `agy --print` entirely and speak to a
 language_server instance directly — either the one the IDE already runs, or one
 the plugin spawns itself.
 
@@ -50,7 +50,7 @@ language_server_linux_x64
 ```
 
 Lifecycle: if the language_server dies, the IDE supervisor respawns it within
-~1 s, with the **same ports** but **new CSRF tokens**. So if the bridge depended
+~1 s, with the **same ports** but **new CSRF tokens**. So if the plugin depended
 on this, it would have to re-read `ps` / `/proc/<pid>/cmdline` after each
 unexpected `Exit`.
 

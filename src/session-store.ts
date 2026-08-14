@@ -13,11 +13,11 @@ interface StoreFile {
 }
 
 function defaultStateFile(): string {
-  return join(homedir(), ".opencode-agy-bridge", "sessions.json");
+  return join(homedir(), ".opencode-agy-plugin", "sessions.json");
 }
 
 function defaultBindingLockPath(): string {
-  return join(homedir(), ".opencode-agy-bridge", "binding.lock");
+  return join(homedir(), ".opencode-agy-plugin", "binding.lock");
 }
 
 async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
