@@ -154,19 +154,6 @@ If you get `ProviderInitError` after configuring the plugin from an npm package,
 
 **Workaround:** use the local checkout configuration above, or temporarily comment out the `registry` line in `~/.npmrc`, restart OpenCode so it downloads the package from the public npm registry, then restore the corporate registry setting. The cached package in `~/.cache/opencode/packages/` will continue to work.
 
-## Roadmap
-
-### Current
-
-- **Unified plugin + provider entry point** — single package that OpenCode auto-detects as both plugin and provider.
-- **Headless-safe spawn** — `-p <prompt>` and `--dangerously-skip-permissions` (fixes ignored-prompt / welcome-message and blocked tool-permission prompts).
-- **Model and effort flags** — forwarded to `agy --model` / `--effort`.
-- **Robust delta extraction** — end-of-line normalization (`\r\n` ↔ `\n`), whitespace-tolerant alignment, suffix fallback for context window truncation recovery.
-- **Session persistence across restarts** — conversation state survives OpenCode restarts via `~/.opencode-agy-plugin/sessions.json`.
-- **Conversation binding via `.pb` file diffing** — automatically discovers the `conversation_id` created by `agy` so multi-turn conversations work.
-- **Global binding lock** — prevents race conditions when multiple OpenCode instances run concurrently.
-- **stream-json** — `agy --output-format stream-json` `text_delta` events are forwarded as OpenCode `text-delta`.
-
 ## Project structure
 
 ```
