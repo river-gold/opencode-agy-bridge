@@ -3,7 +3,7 @@ import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface ModelCacheFile {
   binary: string;
@@ -73,7 +73,7 @@ export function parseAgyModels(output: string): Record<string, DiscoveredAgyMode
   return models;
 }
 
-export function defaultModelCacheFile(): string {
+function defaultModelCacheFile(): string {
   return join(homedir(), ".cache", "opencode-agy-plugin", "models.json");
 }
 
@@ -85,7 +85,7 @@ export function isModelCacheFresh(
   return Boolean(cache && now - cache.fetchedAt <= ttlMs);
 }
 
-export async function loadModelCache(path: string): Promise<ModelCacheFile | null> {
+async function loadModelCache(path: string): Promise<ModelCacheFile | null> {
   try {
     const raw = await readFile(path, "utf-8");
     const parsed = JSON.parse(raw) as ModelCacheFile;
@@ -118,7 +118,7 @@ function assignModels(
   };
 }
 
-export function listAgyModels(binary = "agy"): Promise<Record<string, DiscoveredAgyModel>> {
+function listAgyModels(binary = "agy"): Promise<Record<string, DiscoveredAgyModel>> {
   return new Promise((resolve) => {
     const child = spawn(binary, ["models"], {
       stdio: ["ignore", "pipe", "pipe"],

@@ -26,8 +26,7 @@ export interface RunAgyResult {
 
 export type AgyStreamEvent =
   | { type: "text"; text: string }
-  | { type: "conversation"; id: string }
-  | { type: "result"; status: string; response: string; error?: string };
+  | { type: "conversation"; id: string };
 
 export async function runAgyStream(
   input: RunAgyInput,
@@ -141,14 +140,6 @@ export async function runAgyStream(
         resultStatus = typeof result.status === "string" ? result.status : undefined;
         resultResponse = typeof result.response === "string" ? result.response : undefined;
         resultError = typeof result.error === "string" ? result.error : undefined;
-        if (resultStatus && resultResponse !== undefined) {
-          onEvent({
-            type: "result",
-            status: resultStatus,
-            response: resultResponse,
-            ...(resultError ? { error: resultError } : {}),
-          });
-        }
         const resultUsage = result.usage as Record<string, unknown> | undefined;
         if (
           resultUsage &&
