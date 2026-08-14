@@ -325,4 +325,36 @@ exit 0
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  test("rejects on close when DONE snapshot does not match accumulated text", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"Foo"}'
+printf '%s\\n' '{"event":"step_update","status":"DONE","step_type":"agent_response","text_delta":"Bar"}'
+printf '%s\\n' '{"event":"result","status":"SUCCESS","response":"Bar"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      await expect(
+        runAgyStream(
+          {
+            binary: mockBinary,
+            prompt: "hi",
+            cwd: tmp,
+            timeoutMs: 5000,
+          },
+          () => {},
+        ),
+      ).rejects.toThrow("Inconsistent stream: DONE snapshot does not match accumulated text");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
 });

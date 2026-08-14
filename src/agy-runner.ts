@@ -78,6 +78,7 @@ export async function runAgyStream(
     let conversationId: string | undefined;
     let usage: RunAgyResult["usage"];
     let sawValidEvent = false;
+    let streamError: Error | undefined;
 
     const processLine = (line: string) => {
       line = line.trim();
@@ -131,6 +132,10 @@ export async function runAgyStream(
                 accumulatedText = textDelta;
                 onEvent({ type: "text", text: missingSuffix });
               }
+            } else if (!streamError) {
+              streamError = new Error(
+                "Inconsistent stream: DONE snapshot does not match accumulated text",
+              );
             }
           } else if (textDelta) {
             accumulatedText += textDelta;
@@ -205,6 +210,11 @@ export async function runAgyStream(
       if (exitCode !== 0 && !stdout.trim()) {
         const msg = stderr.trim() || `agy exited with status ${exitCode}`;
         reject(new Error(msg));
+        return;
+      }
+
+      if (streamError) {
+        reject(streamError);
         return;
       }
 
