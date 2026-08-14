@@ -1,19 +1,26 @@
 # opencode-agy-bridge
 
+Maintained fork of [raultov/opencode-agy-bridge](https://github.com/raultov/opencode-agy-bridge). The original repository is no longer receiving updates.
+
 OpenCode plugin + provider that routes LLM prompts to `agy` (Google Antigravity CLI).
 
 ## How it works
 
 ```
 opencode TUI
-  └─ /model → select agy/antigravity
+  └─ /model → select agy/<model-id>
       └─ you type a prompt
-          └─ provider spawns: agy --add-dir <cwd> [--conversation <id>] -p -
-              └─ agy → Google Antigravity backend → Gemini
+          └─ provider spawns:
+             agy --add-dir <cwd> --dangerously-skip-permissions
+                 [--model <id>] [--effort <low|medium|high>]
+                 [--conversation <id>] -p <prompt>
+              └─ agy → Google Antigravity backend
                   └─ stdout (buffered, full response)
               └─ provider extracts delta vs previous turn
           └─ text-delta + finish → opencode renders the response
 ```
+
+The prompt is passed as a CLI argument, not stdin. `--dangerously-skip-permissions` is always set so headless `agy` does not block on tool-permission prompts.
 
 ## Prerequisites
 
@@ -23,53 +30,23 @@ opencode TUI
 
 ## Installation
 
-### Automatic (hands-free)
+This fork is **not published to npm**. The npm package `opencode-agy-bridge@0.2.8` is the original, unmaintained build and does not include the fixes below.
 
-Add the package with its version to `~/.config/opencode/opencode.json`. OpenCode will download and resolve it from npm automatically — no terminal commands needed.
-
-### Manual global install
+### Build from this repository
 
 ```bash
-npm install -g opencode-agy-bridge
-# or: bun install -g opencode-agy-bridge
-# or: pnpm add -g opencode-agy-bridge
-```
-
-### Build from source
-
-```bash
-git clone https://github.com/raultov/opencode-agy-bridge.git
+git clone https://github.com/river-gold/opencode-agy-bridge.git
 cd opencode-agy-bridge
 bun install && bun run build && bun test
 ```
+
+Then point OpenCode at the local checkout (see Configuration).
 
 ## Configuration
 
 Add the plugin and provider to `~/.config/opencode/opencode.json`.
 
 > The **node.js** path represents a **package** (directory or npm package name), not a `.js` file. Pointing `"npm"` at a `.js` file will cause a `ProviderInitError` because opencode internally appends `/provider` to resolve the exports map.
-
-### Recommended: automatic from npm
-
-```jsonc
-{
-  "plugin": [
-    "opencode-agy-bridge@0.2.8"
-  ],
-  "provider": {
-    "agy": {
-      "npm": "opencode-agy-bridge",
-      "name": "Google Antigravity (via agy CLI)",
-      "options": { "binary": "agy", "timeoutMs": 300000 },
-      "models": { "antigravity": { "name": "Antigravity (Gemini)" } }
-    }
-  }
-}
-```
-
-> **Always pin a fixed version** in the `plugin` array (e.g. `@0.2.8`). Do **not** omit the version and do **not** use bare package names or `@latest` — new releases may contain bugs or breaking changes that would be pulled silently on the next OpenCode restart.
-
-### Local development (absolute paths)
 
 ```jsonc
 {
@@ -80,52 +57,91 @@ Add the plugin and provider to `~/.config/opencode/opencode.json`.
     "agy": {
       "npm": "/home/USER/workspace/opencode-agy-bridge",
       "name": "Google Antigravity (via agy CLI)",
-      "options": { "binary": "agy", "timeoutMs": 300000 },
-      "models": { "antigravity": { "name": "Antigravity (server-selected Gemini)" } }
+      "options": {
+        "binary": "agy",
+        "timeoutMs": 300000
+      },
+      "models": {
+        "gemini-3.7-flash-high": { "name": "Gemini 3.7 Flash (High)" },
+        "gemini-3.1-pro-high": { "name": "Gemini 3.1 Pro (High)" },
+        "claude-sonnet-4-6": { "name": "Claude Sonnet 4.6" }
+      }
     }
   }
 }
 ```
 
-Then restart OpenCode and run `/model` → select `agy/antigravity`.
+Restart OpenCode and run `/model` → select an `agy/...` model.
+
+Model IDs are forwarded to `agy --model`. Use IDs from `agy models` — the list changes as Antigravity updates. A cosmetic id such as `antigravity` is sent to `agy` as-is and will fail if that id is not a real model.
+
+### Options
+
+| Option | Default | Meaning |
+|---|---|---|
+| `binary` | `"agy"` | CLI path or command name |
+| `timeoutMs` | `300000` | Kill the process with `SIGTERM` after this many ms |
+| `extraArgs` | `[]` | Extra argv inserted after `--dangerously-skip-permissions` |
+| `model` | — | Fallback model id. Also accepts `model:effort` (e.g. `gemini-3.6-flash:high`) |
+| `effort` | `"high"` when a model is set | Fallback reasoning effort (`low` \| `medium` \| `high`) |
+| `conversationsDir` | `~/.gemini/antigravity-cli/conversations` | Directory of `agy` `.pb` conversation files |
+| `stateFile` | `~/.opencode-agy-bridge/sessions.json` | Session → conversation binding store |
+
+### Model and effort
+
+Resolution order:
+
+- **model:** `providerOptions.agy.model` → model factory option → OpenCode `/model` id → `options.model`
+- **effort:** `providerOptions.agy.effort` → `x-agy-effort` header → model factory option → `options.effort` → `"high"` if a model is set
+
+The plugin copies OpenCode session id and effort into headers (`x-agy-session-id`, `x-agy-effort`). Effort is taken from, in order: chat **variant**, then `model.options.reasoningEffort` / `effort`, then the same fields on the provider.
+
+If the selected model id contains `:`, it is split into `--model` and `--effort` (`gemini-3.6-flash:high` → `--model gemini-3.6-flash --effort high`).
 
 ## Features
 
-- **Robust Delta Extraction:** Automatically normalizes `\r\n` (CRLF) and `\n` (LF) line endings, tolerates trailing whitespace/newline differences, and implements suffix-based alignment to support seamless recovery during context window truncation.
+- **Unified plugin + provider** — one package, auto-detected as both plugin and provider.
+- **Headless `agy` spawn** — prompt via `-p <text>`, `--dangerously-skip-permissions` always on.
+- **Model / effort forwarding** — OpenCode model id and variant are passed to `agy --model` / `--effort`.
+- **Robust delta extraction** — normalizes `\r\n` / `\n`, tolerates trailing whitespace, suffix alignment after context-window truncation.
+- **Session persistence** — conversation state survives OpenCode restarts via `~/.opencode-agy-bridge/sessions.json`.
+- **Conversation binding** — infers `conversation_id` by diffing `agy` `.pb` files so multi-turn chat works.
+- **Global binding lock** — serializes first-turn `.pb` discovery across concurrent OpenCode instances.
 
 ## Known limitations
 
 | Limitation | Detail |
 |---|---|
-| **No real streaming** | `agy --print` buffers the full response and emits it on completion. Tokens appear in one batch, not one-by-one. PTY allocation (`script -q`) was tested and does not destrabilize the buffering — agy holds output until the response is complete regardless of whether stdout is a TTY. The provider therefore emits a single `text-delta` per turn instead of faking progressive chunks. |
-| **Single cosmetic model** | `agy` does not accept `--model`. The model is chosen server-side by Antigravity. Declaring extra models in config has no effect. |
+| **No real streaming** | `agy -p` buffers the full response and emits it on completion. Tokens appear in one batch. PTY allocation (`script -q`) does not destabilize the buffering — agy holds output until the response is complete regardless of whether stdout is a TTY. The provider emits a single `text-delta` per turn. |
+| **`--dangerously-skip-permissions` always on** | There is no option to disable it. Tool permission prompts would otherwise block headless runs. |
 | **Requires authenticated `agy`** | You must run `agy` standalone at least once to authenticate via OAuth. |
 | **No tool-call passthrough** | `agy` CLI does not return structured tool calls to the caller. Tool use happens inside agy's own process. |
-| **Per-turn subprocess** | Each prompt spawns a fresh `agy` process. Context is preserved via `--conversation <id>`. |
-| **Images/file parts omitted** | OpenCode messages with image/file content parts are skipped with a warning — `agy` CLI does not support them. |
+| **Per-turn subprocess** | Each prompt spawns a fresh `agy` process. Context is preserved via `--conversation <id>` after binding succeeds. |
+| **Images/file parts omitted** | Non-text content parts are dropped. `agy` CLI does not support them. |
+| **Prompt via argv** | Very long prompts can hit the OS argument-length limit. |
 | **Conversation binding heuristic** | The bridge infers `conversation_id` by diffing `~/.gemini/antigravity-cli/conversations/*.pb` before/after each turn. If multiple `.pb` files appear simultaneously, binding is refused and each turn runs in single-turn mode. |
 
 ## Installation issues in corporate environments
 
-If you get `ProviderInitError` after configuring the bridge, it may be caused by an **OpenCode bug** where the provider package download fails silently (no error logged) instead of surfacing the underlying problem. This is commonly triggered by:
+If you get `ProviderInitError` after configuring the bridge from an npm package, it may be caused by an **OpenCode bug** where the provider package download fails silently (no error logged) instead of surfacing the underlying problem. This is commonly triggered by:
 
 - **Corporate npm registry proxies** (Nexus, Artifactory, Verdaccio, JFrog — any `registry` configured in `~/.npmrc`) that enforce allowlists, security scans, or maturity policies on newly published packages.
 - **Newly published versions** that haven't been cached or approved by the corporate proxy yet.
 
 **Diagnostic:** check `~/.cache/opencode/packages/opencode-agy-bridge@<version>/`. If the directory is empty or missing files despite a successful OpenCode startup, the proxy silently blocked the download.
 
-**Workaround:** temporarily comment out the `registry` line in `~/.npmrc`, restart OpenCode so it downloads the package from the public npm registry, then restore the corporate registry setting. The cached package in `~/.cache/opencode/packages/` will continue to work.
-
-**Long-term fix:** ask your registry administrator to add `opencode-agy-bridge` to the package allowlist.
+**Workaround:** use the local checkout configuration above, or temporarily comment out the `registry` line in `~/.npmrc`, restart OpenCode so it downloads the package from the public npm registry, then restore the corporate registry setting. The cached package in `~/.cache/opencode/packages/` will continue to work.
 
 ## Roadmap
 
-### v0.x — Current
+### Current
 
-- **Unified plugin + provider entry point** — single npm package that OpenCode auto-detects as both plugin and provider.
+- **Unified plugin + provider entry point** — single package that OpenCode auto-detects as both plugin and provider.
+- **Headless-safe spawn** — `-p <prompt>` and `--dangerously-skip-permissions` (fixes ignored-prompt / welcome-message and blocked tool-permission prompts).
+- **Model and effort flags** — forwarded to `agy --model` / `--effort`.
 - **Robust delta extraction** — end-of-line normalization (`\r\n` ↔ `\n`), whitespace-tolerant alignment, suffix fallback for context window truncation recovery.
 - **Session persistence across restarts** — conversation state survives OpenCode restarts via `~/.opencode-agy-bridge/sessions.json`.
-- **Conversation binding via `.pb` file diffing** — automatically discovers the `conversation_id` created by `agy` so multi-turn conversations work seamlessly.
+- **Conversation binding via `.pb` file diffing** — automatically discovers the `conversation_id` created by `agy` so multi-turn conversations work.
 - **Global binding lock** — prevents race conditions when multiple OpenCode instances run concurrently.
 
 ### Future — Real streaming (see [`specs/docs/STREAMING_RESEARCH.md`](specs/docs/STREAMING_RESEARCH.md))
@@ -138,12 +154,13 @@ A future v2 could bypass `agy --print` entirely and speak directly to a language
 
 ```
 src/
+├── index.ts                # unified plugin + provider entry
+├── plugin.ts               # OpenCode plugin hooks
+├── provider.ts             # LanguageModelV2 implementation
 ├── agy-runner.ts           # spawn agy, capture stdout/stderr
 ├── conversation-tracker.ts # snapshot .pb files, infer conversation_id
 ├── session-store.ts        # persist session→conversation_id mapping
-├── prompt-mapper.ts        # Vercel AI SDK prompt → plain text
-├── provider.ts             # LanguageModelV2 implementation (core)
-└── plugin.ts               # OpenCode plugin entrypoint (hooks)
+└── prompt-mapper.ts        # Vercel AI SDK prompt → plain text
 ```
 
 ## Development
@@ -152,5 +169,3 @@ src/
 bun run build   # compile TypeScript
 bun test        # run test suite
 ```
-
-
