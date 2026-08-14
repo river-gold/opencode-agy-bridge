@@ -1,6 +1,6 @@
 # opencode-agy-plugin
 
-[한국어](docs/README_ko.md) [日本語](docs/README_ja.md) [中文](docs/README_zh.md)
+[[한국어]](docs/README_ko.md) [[日本語]](docs/README_ja.md) [[中文]](docs/README_zh.md)
 
 An OpenCode plugin and provider that connects the `agy` CLI to OpenCode. Select and use models exposed by `agy` directly from OpenCode.
 
