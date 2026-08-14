@@ -357,4 +357,234 @@ exit 0
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  test("rejects on non-zero exit with partial stdout", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"init","conversation_id":"conv-partial"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"Partial response"}'
+echo "process crashed unexpectedly" >&2
+exit 1
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const texts: string[] = [];
+      await expect(
+        runAgyStream(
+          {
+            binary: mockBinary,
+            prompt: "x",
+            cwd: tmp,
+            timeoutMs: 5000,
+          },
+          (event) => {
+            if (event.type === "text") {
+              texts.push(event.text);
+            }
+          },
+        ),
+      ).rejects.toThrow("process crashed unexpectedly");
+      expect(texts).toEqual(["Partial response"]);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects when explicit result status is not SUCCESS even without error string", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"init","conversation_id":"conv-1"}'
+printf '%s\\n' '{"event":"result","status":"ERROR"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      await expect(
+        runAgy({
+          binary: mockBinary,
+          prompt: "x",
+          cwd: tmp,
+          timeoutMs: 5000,
+        }),
+      ).rejects.toThrow("agy failed with status ERROR");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects with AbortError when abortSignal is triggered", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+sleep 10
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const ac = new AbortController();
+      const promise = runAgy({
+        binary: mockBinary,
+        prompt: "x",
+        cwd: tmp,
+        timeoutMs: 5000,
+        abortSignal: ac.signal,
+      });
+
+      // Abort after a small delay
+      setTimeout(() => ac.abort(), 50);
+
+      let caughtErr: unknown;
+      try {
+        await promise;
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      expect(caughtErr).toBeDefined();
+      expect((caughtErr as Error).name).toBe("AbortError");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects immediately with AbortError if already aborted", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const ac = new AbortController();
+      ac.abort();
+
+      let caughtErr: unknown;
+      try {
+        await runAgy({
+          binary: mockBinary,
+          prompt: "x",
+          cwd: tmp,
+          timeoutMs: 5000,
+          abortSignal: ac.signal,
+        });
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      expect(caughtErr).toBeDefined();
+      expect((caughtErr as Error).name).toBe("AbortError");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects on timeout", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+sleep 10
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      await expect(
+        runAgy({
+          binary: mockBinary,
+          prompt: "x",
+          cwd: tmp,
+          timeoutMs: 100,
+        }),
+      ).rejects.toThrow("agy timed out");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("terminates SIGTERM-ignoring child via bounded SIGKILL and suppresses late events", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+trap '' TERM
+printf '%s\\n' '{"event":"init","conversation_id":"conv-ignore-term"}'
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"initial"}'
+sleep 10 &
+wait $!
+printf '%s\\n' '{"event":"step_update","status":"ACTIVE","step_type":"agent_response","text_delta":"late text"}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const ac = new AbortController();
+      const events: string[] = [];
+      let abortTime = 0;
+
+      const promise = runAgyStream(
+        {
+          binary: mockBinary,
+          prompt: "x",
+          cwd: tmp,
+          timeoutMs: 10000,
+          abortSignal: ac.signal,
+        },
+        (event) => {
+          if (event.type === "text") {
+            events.push(event.text);
+            if (events.length === 1) {
+              abortTime = Date.now();
+              ac.abort();
+            }
+          }
+        },
+      );
+
+      let caughtErr: unknown;
+      try {
+        await promise;
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      const elapsed = Date.now() - abortTime;
+      expect(caughtErr).toBeDefined();
+      expect((caughtErr as Error).name).toBe("AbortError");
+      expect(elapsed).toBeLessThan(5000);
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(events).toEqual(["initial"]);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
 });

@@ -28,10 +28,37 @@ export type AgyStreamEvent =
   | { type: "text"; text: string }
   | { type: "conversation"; id: string };
 
+function createAbortError(reason?: unknown): Error {
+  if (reason instanceof Error) {
+    if (reason.name === "AbortError") {
+      return reason;
+    }
+    const err = new Error(reason.message);
+    err.name = "AbortError";
+    err.stack = reason.stack;
+    return err;
+  }
+  if (typeof DOMException !== "undefined") {
+    return new DOMException(
+      typeof reason === "string" ? reason : "The operation was aborted",
+      "AbortError",
+    );
+  }
+  const err = new Error(
+    typeof reason === "string" ? reason : "The operation was aborted",
+  );
+  err.name = "AbortError";
+  return err;
+}
+
 export async function runAgyStream(
   input: RunAgyInput,
   onEvent: (event: AgyStreamEvent) => void,
 ): Promise<RunAgyResult> {
+  if (input.abortSignal?.aborted) {
+    return Promise.reject(createAbortError(input.abortSignal.reason));
+  }
+
   const binary = input.binary ?? "agy";
   const timeoutMs = input.timeoutMs ?? 300_000;
   const extraArgs = input.extraArgs ?? [];
@@ -80,7 +107,82 @@ export async function runAgyStream(
     let sawValidEvent = false;
     let streamError: Error | undefined;
 
+    let settled = false;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    let killFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const emitEvent = (event: AgyStreamEvent) => {
+      if (!settled) {
+        onEvent(event);
+      }
+    };
+
+    const cleanup = () => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = undefined;
+      }
+      if (killFallbackTimer) {
+        clearTimeout(killFallbackTimer);
+        killFallbackTimer = undefined;
+      }
+      if (input.abortSignal && onAbort) {
+        input.abortSignal.removeEventListener("abort", onAbort);
+      }
+    };
+
+    const settleResolve = (value: RunAgyResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const settleReject = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = undefined;
+      }
+      if (input.abortSignal && onAbort) {
+        input.abortSignal.removeEventListener("abort", onAbort);
+      }
+      reject(err);
+    };
+
+    const killChild = () => {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return;
+      }
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+      if (!killFallbackTimer) {
+        killFallbackTimer = setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // ignore
+            }
+          }
+        }, 1000);
+        killFallbackTimer.unref?.();
+      }
+    };
+
+    const onAbort = () => {
+      killChild();
+      settleReject(createAbortError(input.abortSignal?.reason));
+    };
+
     const processLine = (line: string) => {
+      if (settled) {
+        return;
+      }
       line = line.trim();
       if (!line.startsWith("{")) {
         return;
@@ -100,7 +202,7 @@ export async function runAgyStream(
 
       if (parsed.event === "init" && typeof parsed.conversation_id === "string") {
         conversationId = parsed.conversation_id;
-        onEvent({ type: "conversation", id: conversationId });
+        emitEvent({ type: "conversation", id: conversationId });
         return;
       }
 
@@ -111,7 +213,7 @@ export async function runAgyStream(
           (typeof parsed.conversation_id === "string" ? parsed.conversation_id : undefined);
         if (stepConvId) {
           conversationId = stepConvId;
-          onEvent({ type: "conversation", id: conversationId });
+          emitEvent({ type: "conversation", id: conversationId });
         }
 
         const stepType =
@@ -130,7 +232,7 @@ export async function runAgyStream(
               const missingSuffix = textDelta.slice(accumulatedText.length);
               if (missingSuffix) {
                 accumulatedText = textDelta;
-                onEvent({ type: "text", text: missingSuffix });
+                emitEvent({ type: "text", text: missingSuffix });
               }
             } else if (!streamError) {
               streamError = new Error(
@@ -139,7 +241,7 @@ export async function runAgyStream(
             }
           } else if (textDelta) {
             accumulatedText += textDelta;
-            onEvent({ type: "text", text: textDelta });
+            emitEvent({ type: "text", text: textDelta });
           }
         }
         return;
@@ -149,10 +251,10 @@ export async function runAgyStream(
         const result = (parsed.result ?? parsed) as Record<string, unknown>;
         if (typeof parsed.conversation_id === "string") {
           conversationId = parsed.conversation_id;
-          onEvent({ type: "conversation", id: conversationId });
+          emitEvent({ type: "conversation", id: conversationId });
         } else if (typeof result.conversation_id === "string") {
           conversationId = result.conversation_id;
-          onEvent({ type: "conversation", id: conversationId });
+          emitEvent({ type: "conversation", id: conversationId });
         }
         resultStatus = typeof result.status === "string" ? result.status : undefined;
         resultResponse = typeof result.response === "string" ? result.response : undefined;
@@ -174,51 +276,52 @@ export async function runAgyStream(
     };
 
     child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) return;
       stdoutChunks.push(chunk);
       stdoutBuffer += chunk.toString("utf-8");
       const lines = stdoutBuffer.split("\n");
       stdoutBuffer = lines.pop() ?? "";
       lines.forEach(processLine);
     });
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      stderrChunks.push(chunk);
+    });
 
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("agy timed out"));
+    timeoutTimer = setTimeout(() => {
+      killChild();
+      settleReject(new Error("agy timed out"));
     }, timeoutMs);
 
-    const abort = () => child.kill("SIGTERM");
-    input.abortSignal?.addEventListener("abort", abort, { once: true });
-    if (input.abortSignal?.aborted) {
-      child.kill("SIGTERM");
-    }
+    input.abortSignal?.addEventListener("abort", onAbort, { once: true });
 
     child.on("close", (code) => {
-      clearTimeout(timer);
-      input.abortSignal?.removeEventListener("abort", abort);
+      cleanup();
+      if (settled) return;
       processLine(stdoutBuffer);
 
       const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       const exitCode = code ?? 1;
 
-      if (resultStatus && resultStatus !== "SUCCESS" && resultError) {
-        reject(new Error(resultError));
+      if (exitCode !== 0) {
+        const msg = resultError?.trim() || stderr.trim() || `agy exited with status ${exitCode}`;
+        settleReject(new Error(msg));
         return;
       }
 
-      if (exitCode !== 0 && !stdout.trim()) {
-        const msg = stderr.trim() || `agy exited with status ${exitCode}`;
-        reject(new Error(msg));
+      if (resultStatus && resultStatus !== "SUCCESS") {
+        const msg = resultError?.trim() || `agy failed with status ${resultStatus}`;
+        settleReject(new Error(msg));
         return;
       }
 
       if (streamError) {
-        reject(streamError);
+        settleReject(streamError);
         return;
       }
 
-      resolve({
+      settleResolve({
         stdout: accumulatedText || resultResponse || (!sawValidEvent ? stdout : ""),
         stderr,
         exitCode,
@@ -228,9 +331,8 @@ export async function runAgyStream(
     });
 
     child.on("error", (err) => {
-      clearTimeout(timer);
-      input.abortSignal?.removeEventListener("abort", abort);
-      reject(new Error(`failed to spawn agy: ${err.message}`));
+      cleanup();
+      settleReject(new Error(`failed to spawn agy: ${err.message}`));
     });
   });
 }
