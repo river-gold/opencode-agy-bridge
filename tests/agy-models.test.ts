@@ -20,12 +20,20 @@ gpt-oss-120b-medium	GPT-OSS 120B (Medium)
 `;
 
 describe("parseAgyModels", () => {
-  test("keeps original ids when suffix siblings exist without a base id", () => {
+  test("groups suffix-only ids under a synthetic base with first suffix as default effort", () => {
     const models = parseAgyModels(sample);
-    expect(models["gemini-3.7-flash"]).toBeUndefined();
-    expect(models["gemini-3.7-flash-high"]).toEqual({ name: "Gemini 3.7 Flash (High)" });
-    expect(models["gemini-3.7-flash-medium"]).toEqual({ name: "Gemini 3.7 Flash (Medium)" });
-    expect(models["gemini-3.7-flash-low"]).toEqual({ name: "Gemini 3.7 Flash (Low)" });
+    expect(models["gemini-3.7-flash"]).toEqual({
+      name: "Gemini 3.7 Flash",
+      options: { effort: "high" },
+      variants: {
+        high: {},
+        medium: {},
+        low: {},
+      },
+    });
+    expect(models["gemini-3.7-flash-high"]).toBeUndefined();
+    expect(models["gemini-3.7-flash-medium"]).toBeUndefined();
+    expect(models["gemini-3.7-flash-low"]).toBeUndefined();
   });
 
   test("keeps a lone suffixed id as-is", () => {
@@ -45,10 +53,11 @@ describe("parseAgyModels", () => {
     );
     expect(models["gemini-3.7-flash"]).toEqual({
       name: "Gemini 3.7 Flash",
+      options: { effort: "high" },
       variants: {
-        high: { model: "gemini-3.7-flash-high" },
-        medium: { model: "gemini-3.7-flash-medium" },
-        low: { model: "gemini-3.7-flash-low" },
+        high: {},
+        medium: {},
+        low: {},
       },
     });
     expect(models["gemini-3.7-flash-high"]).toBeUndefined();
@@ -60,13 +69,26 @@ describe("parseAgyModels", () => {
     const models = parseAgyModels("foo\tFoo\nfoo-fast\tFoo (fast)\nfoo-deep\tFoo (deep)\n");
     expect(models.foo).toEqual({
       name: "Foo",
+      options: { effort: "fast" },
       variants: {
-        fast: { model: "foo-fast" },
-        deep: { model: "foo-deep" },
+        fast: {},
+        deep: {},
       },
     });
     expect(models["foo-fast"]).toBeUndefined();
     expect(models["foo-deep"]).toBeUndefined();
+  });
+
+  test("uses first suffix as default effort when variant order changes", () => {
+    const models = parseAgyModels("foo\tFoo\nfoo-deep\tFoo (deep)\nfoo-fast\tFoo (fast)\n");
+    expect(models.foo).toEqual({
+      name: "Foo",
+      options: { effort: "deep" },
+      variants: {
+        deep: {},
+        fast: {},
+      },
+    });
   });
 
   test("parses space-aligned columns", () => {
@@ -139,6 +161,39 @@ describe("model cache", () => {
         },
       });
       expect(next.provider?.agy?.models["fresh-model"]).toEqual({ name: "Fresh" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses version 5 cache without listing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agy-models-cache-"));
+    const cacheFile = join(dir, "models.json");
+    let listed = 0;
+    try {
+      await writeFile(
+        cacheFile,
+        JSON.stringify({
+          version: 5,
+          binary: "agy",
+          fetchedAt: 1000,
+          models: { "cached-model": { name: "Cached" } },
+        }),
+        "utf-8",
+      );
+      const cfg: { provider?: Record<string, any> } = {};
+      await applyAgyModels(cfg, {
+        cacheFile,
+        now: 1000,
+        ttlMs: 10_000,
+        list: async () => {
+          listed += 1;
+          return { "fresh-model": { name: "Fresh" } };
+        },
+      });
+      expect(listed).toBe(0);
+      expect(cfg.provider?.agy?.models["cached-model"]).toEqual({ name: "Cached" });
+      expect(cfg.provider?.agy?.models["fresh-model"]).toBeUndefined();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

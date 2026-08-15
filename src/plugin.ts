@@ -19,6 +19,16 @@ const plugin: Plugin = async ({ directory }) => ({
 
     const modelObj = (incoming?.model as any);
     const providerObj = (incoming?.provider as any);
+    const variant =
+      typeof (incoming as any)?.variant === "string" && (incoming as any).variant.trim()
+        ? (incoming as any).variant.trim()
+        : typeof (incoming as any)?.message?.model?.variant === "string" &&
+            (incoming as any).message.model.variant.trim()
+          ? (incoming as any).message.model.variant.trim()
+          : undefined;
+    if (variant) {
+      output.headers["x-agy-variant"] = variant;
+    }
     const effort =
       (incoming as any)?.variant ??
       (incoming as any)?.message?.model?.variant ??

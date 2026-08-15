@@ -112,7 +112,7 @@ export function extractDelta(
 function buildLanguageModel(
   modelId: string,
   opts: AgyProviderOptions,
-  modelOpts?: { effort?: string; model?: string },
+  modelOpts?: { effort?: string },
 ): LanguageModelV2 {
   const store = new SessionStore(opts.stateFile);
   const conversationsDir = opts.conversationsDir ?? defaultConversationsDir();
@@ -187,21 +187,17 @@ function buildLanguageModel(
       const providerAgyOpts = callOpts.providerOptions?.agy as Record<string, unknown> | undefined;
 
       const headerEffort = callOpts.headers?.["x-agy-effort"] as string | undefined;
-      const remappedModel =
-        typeof providerAgyOpts?.model === "string" ? providerAgyOpts.model : undefined;
-      const usedRemap = Boolean(remappedModel && remappedModel !== modelId);
+      const headerVariant = callOpts.headers?.["x-agy-variant"] as string | undefined;
+      const rawModel = modelId;
+      const rawEffort = (providerAgyOpts?.effort as string) ??
+        headerEffort ??
+        modelOpts?.effort ??
+        opts.effort;
 
-      const rawModel = remappedModel ??
-        modelOpts?.model ??
-        modelId;
-      const rawEffort = usedRemap
-        ? (typeof providerAgyOpts?.effort === "string" ? providerAgyOpts.effort : undefined)
-        : (providerAgyOpts?.effort as string) ??
-          headerEffort ??
-          modelOpts?.effort ??
-          opts.effort;
-
-      const { model, effort } = parseModelAndEffort(rawModel, rawEffort);
+      const parsed = parseModelAndEffort(rawModel, rawEffort);
+      const variant = headerVariant?.trim();
+      const model = variant ? `${parsed.model}-${variant}` : parsed.model;
+      const effort = variant ? undefined : parsed.effort;
 
       let streamed = false;
       const result = await runAgyStream(
@@ -420,14 +416,14 @@ function unsupportedImageModel(modelId: string): ImageModelV2 {
 export function createAgyProvider(
   opts?: AgyProviderOptions,
 ): ProviderV2 & {
-  (modelId?: string, modelOpts?: { effort?: string; model?: string }): LanguageModelV2;
+  (modelId?: string, modelOpts?: { effort?: string }): LanguageModelV2;
   provider: string;
 } {
   const resolvedOpts = opts ?? {};
 
   const factory = (
     modelId?: string,
-    modelOpts?: { effort?: string; model?: string },
+    modelOpts?: { effort?: string },
   ): LanguageModelV2 => {
     const resolvedModelId = modelId?.trim() ? modelId : resolvedOpts.model;
     if (!resolvedModelId?.trim()) {
@@ -443,7 +439,7 @@ export function createAgyProvider(
   factory.imageModel = (modelId: string) => unsupportedImageModel(modelId);
 
   return factory as ProviderV2 & {
-    (modelId?: string, modelOpts?: { effort?: string; model?: string }): LanguageModelV2;
+    (modelId?: string, modelOpts?: { effort?: string }): LanguageModelV2;
     provider: string;
   };
 }

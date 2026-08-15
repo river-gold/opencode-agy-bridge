@@ -26,6 +26,16 @@ export default function unified(input?: any): any {
 
         const modelObj = incoming?.model;
         const providerObj = incoming?.provider;
+        const variant =
+          typeof incoming?.variant === "string" && incoming.variant.trim()
+            ? incoming.variant.trim()
+            : typeof incoming?.message?.model?.variant === "string" &&
+                incoming.message.model.variant.trim()
+              ? incoming.message.model.variant.trim()
+              : undefined;
+        if (variant) {
+          output.headers["x-agy-variant"] = variant;
+        }
         const effort =
           incoming?.variant ??
           (incoming as any)?.message?.model?.variant ??

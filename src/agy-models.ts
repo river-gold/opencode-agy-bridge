@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const MODEL_CACHE_VERSION = 2;
+const MODEL_CACHE_VERSION = 5;
 
 export interface ModelCacheFile {
   version?: number;
@@ -15,7 +15,8 @@ export interface ModelCacheFile {
 
 export interface DiscoveredAgyModel {
   name: string;
-  variants?: Record<string, { model: string }>;
+  options?: { effort?: string };
+  variants?: Record<string, {}>;
 }
 
 function splitLastHyphen(id: string): { base: string; suffix: string } | null {
@@ -48,7 +49,6 @@ export function parseAgyModels(output: string): Record<string, DiscoveredAgyMode
   }
 
   const baseCount = new Map<string, number>();
-  const rowIds = new Set(rows.map((row) => row.id));
   for (const row of rows) {
     const split = splitLastHyphen(row.id);
     if (!split) continue;
@@ -59,18 +59,24 @@ export function parseAgyModels(output: string): Record<string, DiscoveredAgyMode
 
   for (const row of rows) {
     const split = splitLastHyphen(row.id);
-    if (split && rowIds.has(split.base) && (baseCount.get(split.base) ?? 0) >= 2) {
+    if (split && (baseCount.get(split.base) ?? 0) >= 2) {
       const existing = models[split.base] ?? {
         name: stripSuffixLabel(row.label, split.suffix),
         variants: {},
       };
+      existing.options ??= { effort: split.suffix };
       existing.variants ??= {};
-      existing.variants[split.suffix] = { model: row.id };
+      existing.variants[split.suffix] = {};
       models[split.base] = existing;
       continue;
     }
 
-    models[row.id] = { name: row.label };
+    const existing = models[row.id];
+    if (existing?.variants) {
+      existing.name = row.label;
+    } else {
+      models[row.id] = { name: row.label };
+    }
   }
 
   return models;

@@ -230,7 +230,7 @@ exit 0
     }
   });
 
-  test("remapped variant model uses full id and skips header effort", async () => {
+  test("x-agy-variant remaps base model id and skips --effort", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
     const mockBinary = join(tmp, "mock-agy");
 
@@ -248,10 +248,7 @@ exit 0
       const model = provider("gemini-3.7-flash");
       const result = await model.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-        headers: { "x-agy-effort": "high" },
-        providerOptions: {
-          agy: { model: "gemini-3.7-flash-high" },
-        },
+        headers: { "x-agy-variant": "high" },
       });
 
       const text = result.content[0].type === "text" ? result.content[0].text : "";

@@ -134,5 +134,30 @@ describe("plugin chat.headers session scope", () => {
       );
       expect(output.headers["x-agy-effort"]).toBe("high");
     });
+
+    test(`${name} sets x-agy-variant from top-level variant`, async () => {
+      const hook = await headersOf(entry, pluginInput);
+      const output = { headers: {} as Record<string, string> };
+      await hook(
+        { sessionID: "sess-orig", agent: "build", model: { providerID: "agy" }, variant: "high" },
+        output,
+      );
+      expect(output.headers["x-agy-variant"]).toBe("high");
+    });
+
+    test(`${name} sets x-agy-variant from message.model.variant`, async () => {
+      const hook = await headersOf(entry, pluginInput);
+      const output = { headers: {} as Record<string, string> };
+      await hook(
+        {
+          sessionID: "sess-orig",
+          agent: "build",
+          model: { providerID: "agy" },
+          message: { model: { variant: "high" } },
+        },
+        output,
+      );
+      expect(output.headers["x-agy-variant"]).toBe("high");
+    });
   }
 });

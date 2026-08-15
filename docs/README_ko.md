@@ -45,6 +45,16 @@ npm install opencode-agy-plugin
 
 OpenCode를 재시작한 뒤 `/model`에서 `agy/...` 모델을 선택한다. 모델 목록은 시작할 때 `agy models`에서 자동으로 가져온다.
 
+### 플러그인 업데이트
+
+OpenCode는 npm 플러그인을 캐시한다. 전역 설치를 최신 버전으로 갱신하려면 다음 명령을 실행한다.
+
+```bash
+opencode plugin opencode-agy-plugin --global --force
+```
+
+프로젝트 로컬 설정을 사용하는 경우 `--global`을 제외한다. 업데이트 후 OpenCode를 완전히 종료하고 재시작한다.
+
 ### 로컬 소스 사용
 
 개발 중인 코드를 테스트하려면 다음과 같이 빌드한다.
@@ -81,9 +91,9 @@ bun test
 
 모델을 직접 적지 않으면 플러그인이 `agy models`를 실행해 목록을 만든다.
 
-- base ID가 `agy models` 결과에 함께 있을 때만 마지막 `-` 뒤 문자열을 variant로 묶음
-- 예: `gemini-3.7-flash`, `gemini-3.7-flash-high`, `gemini-3.7-flash-low` → `gemini-3.7-flash`의 `high`, `low`
-- suffix ID만 반환되면 각 원본 ID를 그대로 표시
+- 동일한 prefix를 가진 ID가 2개 이상이면 마지막 `-` 뒤 문자열을 variant로 묶음
+- 예: `gemini-3.7-flash-high`, `gemini-3.7-flash-low` → `gemini-3.7-flash`의 `high`, `low`
+- 자동으로 묶인 base 모델에서 variant를 선택하지 않으면 `agy models` 결과의 첫 번째 variant를 effort로 사용
 - 자동 목록은 `~/.cache/opencode-agy-plugin/models.json`에 24시간 캐시
 - 수동 `models` 항목이 하나라도 있으면 자동 검색과 캐시 사용을 건너뜀
 
@@ -102,8 +112,8 @@ bun test
         "gemini-3.7-flash": {
           "name": "Gemini 3.7 Flash",
           "variants": {
-            "high": { "model": "gemini-3.7-flash-high" },
-            "low": { "model": "gemini-3.7-flash-low" }
+            "high": {},
+            "low": {}
           }
         }
       }
@@ -112,16 +122,9 @@ bun test
 }
 ```
 
-variant에 `model`을 지정하면 해당 원본 ID를 `agy --model`로 전달한다. `--effort`는 추가하지 않는다.
+variant 이름을 base 모델 ID 뒤에 붙여 `agy --model`로 전달하고 `--effort`는 추가하지 않는다.
 
-`model` 없이 variant만 지정하면 선택한 variant가 `agy --effort`로 전달된다.
-
-```jsonc
-"variants": {
-  "high": {},
-  "low": {}
-}
-```
+자동으로 묶인 base 모델은 variant를 선택하지 않으면 `agy models` 결과의 첫 번째 variant를 `--effort`로 사용한다.
 
 ## 모델 선택 문제
 

@@ -304,7 +304,7 @@ console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", respo
     const autoResponse = await client.session.prompt({
       path: { id: autoSessionID },
       body: {
-        model: { providerID: "agy", modelID: "auto-model-high" },
+        model: { providerID: "agy", modelID: "auto-model" },
         parts: [{ type: "text", text: AUTO_MODEL }],
       },
       signal: AbortSignal.timeout(10_000),
@@ -315,14 +315,16 @@ console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", respo
     const finalInvocations = (await readFile(invocationLog, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Invocation);
     const autoInvocation = finalInvocations.find((invocation) =>
       promptOf(invocation).includes(AUTO_MODEL) &&
-      invocation.argv[invocation.argv.indexOf("--model") + 1] === "auto-model-high",
+      invocation.argv[invocation.argv.indexOf("--model") + 1] === "auto-model",
     );
     assert.ok(autoInvocation, "auto model invocation was not found");
     assert.equal(autoInvocation.cwd, workspace);
     assert.notEqual(autoInvocation.cwd, serverCwd);
     assert.equal(autoInvocation.argv[autoInvocation.argv.indexOf("--add-dir") + 1], workspace);
-    assert.equal(autoInvocation.argv[autoInvocation.argv.indexOf("--model") + 1], "auto-model-high");
-    assert.equal(autoInvocation.argv.includes("--effort"), false, "argv must not contain --effort when effort is unspecified");
+    assert.equal(autoInvocation.argv[autoInvocation.argv.indexOf("--model") + 1], "auto-model");
+    const effortIndex = autoInvocation.argv.indexOf("--effort");
+    assert.notEqual(effortIndex, -1, "base model must use the default effort");
+    assert.equal(autoInvocation.argv[effortIndex + 1], "high");
     assert.ok(autoInvocation.argv.includes("--dangerously-skip-permissions"));
     console.log("OpenCode agy E2E passed");
 } catch (error) {

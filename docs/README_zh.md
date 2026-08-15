@@ -45,6 +45,16 @@ npm install opencode-agy-plugin
 
 重启 OpenCode，然后运行 `/model`，选择 `agy/...` 模型。模型列表会在启动时从 `agy models` 自动加载。
 
+### 更新插件
+
+OpenCode 会缓存 npm 插件。要将全局安装更新到最新版本，请运行：
+
+```bash
+opencode plugin opencode-agy-plugin --global --force
+```
+
+如果使用项目本地配置，请省略 `--global`。更新后请完全退出并重新启动 OpenCode。
+
 ### 使用本地代码
 
 如果要进行本地开发或测试：
@@ -81,9 +91,9 @@ bun test
 
 省略 `models` 时，插件会运行 `agy models` 并生成模型列表。
 
-- 只有当最后一个 `-` 之前的 base ID 也由 `agy models` 返回时，才会将最后的字符串合并为 variant
-- 例如：`gemini-3.7-flash`、`gemini-3.7-flash-high` 和 `gemini-3.7-flash-low` 会合并为 `gemini-3.7-flash` 的 `high` 和 `low`
-- 如果只返回带 suffix 的 ID，则每个原始 ID 都会保持可选
+- 如果两个或更多 ID 在最后一个 `-` 之前拥有相同前缀，最后的字符串会被作为 variant 合并
+- 例如：`gemini-3.7-flash-high` 和 `gemini-3.7-flash-low` 会合并为 `gemini-3.7-flash` 的 `high` 和 `low`
+- 自动合并的 base 模型在未选择 variant 时使用 `agy models` 结果中的第一个 variant 作为 effort
 - 自动发现的列表会缓存 24 小时，路径为 `~/.cache/opencode-agy-plugin/models.json`
 - 只要存在一个手动 `models` 条目，就会跳过自动发现和缓存读取
 
@@ -102,8 +112,8 @@ bun test
         "gemini-3.7-flash": {
           "name": "Gemini 3.7 Flash",
           "variants": {
-            "high": { "model": "gemini-3.7-flash-high" },
-            "low": { "model": "gemini-3.7-flash-low" }
+            "high": {},
+            "low": {}
           }
         }
       }
@@ -112,16 +122,9 @@ bun test
 }
 ```
 
-如果 variant 中指定了 `model`，插件会将该原始 ID 传递给 `agy --model`，不会额外添加 `--effort`。
+插件会将 variant 拼接到 base 模型 ID 后传递给 `agy --model`，不会额外添加 `--effort`。
 
-如果 variant 没有指定 `model`，插件会将 variant 名称作为 `agy --effort` 传递：
-
-```jsonc
-"variants": {
-  "high": {},
-  "low": {}
-}
-```
+自动合并的 base 模型在未选择 variant 时使用 `agy models` 结果中的第一个 variant 作为 `--effort`。
 
 ## 故障排查
 
