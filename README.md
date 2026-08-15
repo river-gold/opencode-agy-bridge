@@ -52,10 +52,21 @@ Restart OpenCode, then run `/model` and select an `agy/...` model. The model lis
 OpenCode caches npm plugins. To refresh the global installation to the latest version:
 
 ```bash
-opencode plugin opencode-agy-plugin --global --force
+opencode plugin opencode-agy-plugin@latest --global --force
 ```
 
 For a project-local plugin configuration, omit `--global`. Quit and restart OpenCode after updating.
+
+If the installed version is still old, clear only this plugin's OpenCode package cache and run the update again:
+
+```bash
+rm -rf ~/.cache/opencode/packages/opencode-agy-plugin \
+       ~/.cache/opencode/packages/opencode-agy-plugin@latest
+rm -f ~/.cache/opencode-agy-plugin/models.json
+opencode plugin opencode-agy-plugin@latest --global --force
+```
+
+Do not edit files inside the OpenCode cache manually. OpenCode recreates them during plugin installation.
 
 ### Use a Local Checkout
 

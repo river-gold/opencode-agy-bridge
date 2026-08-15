@@ -50,10 +50,21 @@ OpenCodeを再起動し、`/model`から`agy/...`モデルを選択する。モ�
 OpenCodeはnpmプラグインをキャッシュする。グローバルインストールを最新版に更新するには、次を実行する。
 
 ```bash
-opencode plugin opencode-agy-plugin --global --force
+opencode plugin opencode-agy-plugin@latest --global --force
 ```
 
 プロジェクトローカルの設定を使用する場合は`--global`を外す。更新後、OpenCodeを完全に終了して再起動する。
+
+インストールされたバージョンが古いままの場合は、このプラグインのOpenCodeパッケージキャッシュだけを削除してから、もう一度更新する。
+
+```bash
+rm -rf ~/.cache/opencode/packages/opencode-agy-plugin \
+       ~/.cache/opencode/packages/opencode-agy-plugin@latest
+rm -f ~/.cache/opencode-agy-plugin/models.json
+opencode plugin opencode-agy-plugin@latest --global --force
+```
+
+OpenCodeキャッシュ内のファイルを直接編集しない。プラグインのインストール時にOpenCodeが再生成する。
 
 ### ローカルチェックアウトを使う
 

@@ -50,10 +50,21 @@ OpenCode를 재시작한 뒤 `/model`에서 `agy/...` 모델을 선택한다. �
 OpenCode는 npm 플러그인을 캐시한다. 전역 설치를 최신 버전으로 갱신하려면 다음 명령을 실행한다.
 
 ```bash
-opencode plugin opencode-agy-plugin --global --force
+opencode plugin opencode-agy-plugin@latest --global --force
 ```
 
 프로젝트 로컬 설정을 사용하는 경우 `--global`을 제외한다. 업데이트 후 OpenCode를 완전히 종료하고 재시작한다.
+
+설치된 버전이 계속 이전 버전이면 이 플러그인의 OpenCode 패키지 캐시만 삭제한 뒤 다시 업데이트한다.
+
+```bash
+rm -rf ~/.cache/opencode/packages/opencode-agy-plugin \
+       ~/.cache/opencode/packages/opencode-agy-plugin@latest
+rm -f ~/.cache/opencode-agy-plugin/models.json
+opencode plugin opencode-agy-plugin@latest --global --force
+```
+
+OpenCode 캐시 내부의 파일을 직접 수정하지 않는다. 플러그인 설치 시 OpenCode가 다시 생성한다.
 
 ### 로컬 소스 사용
 

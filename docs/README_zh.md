@@ -50,10 +50,21 @@ npm install opencode-agy-plugin
 OpenCode 会缓存 npm 插件。要将全局安装更新到最新版本，请运行：
 
 ```bash
-opencode plugin opencode-agy-plugin --global --force
+opencode plugin opencode-agy-plugin@latest --global --force
 ```
 
 如果使用项目本地配置，请省略 `--global`。更新后请完全退出并重新启动 OpenCode。
+
+如果安装的版本仍然较旧，请仅删除此插件的 OpenCode 软件包缓存，然后再次运行更新命令：
+
+```bash
+rm -rf ~/.cache/opencode/packages/opencode-agy-plugin \
+       ~/.cache/opencode/packages/opencode-agy-plugin@latest
+rm -f ~/.cache/opencode-agy-plugin/models.json
+opencode plugin opencode-agy-plugin@latest --global --force
+```
+
+不要直接修改 OpenCode 缓存中的文件。安装插件时 OpenCode 会重新生成这些文件。
 
 ### 使用本地代码
 
