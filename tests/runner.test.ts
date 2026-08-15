@@ -326,6 +326,47 @@ exit 0
     }
   });
 
+  test("handles official state and incremental semantics with nested step_update and result envelopes", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"event":"init","conversation_id":"conv-official-123"}'
+printf '%s\\n' '{"event":"step_update","step_update":{"conversation_id":"conv-official-123","state":"ACTIVE","step_type":"agent_response","text_delta":"Hello "}}'
+printf '%s\\n' '{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"world"}}'
+printf '%s\\n' '{"event":"result","result":{"status":"SUCCESS","response":"Hello world","conversation_id":"conv-official-123"}}'
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const texts: string[] = [];
+      const result = await runAgyStream(
+        {
+          binary: mockBinary,
+          prompt: "hi",
+          cwd: tmp,
+          timeoutMs: 5000,
+        },
+        (event) => {
+          if (event.type === "text") {
+            texts.push(event.text);
+          }
+        },
+      );
+
+      expect(texts).toEqual(["Hello ", "world"]);
+      expect(texts.join("")).toBe("Hello world");
+      expect(result.stdout).toBe("Hello world");
+      expect(result.conversationId).toBe("conv-official-123");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("rejects on close when DONE snapshot does not match accumulated text", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
     const mockBinary = join(tmp, "mock-agy");
@@ -583,6 +624,87 @@ exit 0
 
       await new Promise((resolve) => setTimeout(resolve, 1500));
       expect(events).toEqual(["initial"]);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("handles multibyte characters split across stdout chunk boundaries in runAgyStream", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+    const sampleMultibyte = String.fromCodePoint(0xd55c, 0xae00, 0x1f30f);
+    const expectedText = "Hello " + sampleMultibyte + " World";
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env node
+const text = "Hello " + String.fromCodePoint(0xd55c, 0xae00, 0x1f30f) + " World";
+const initLine = JSON.stringify({ event: "init", conversation_id: "conv-multibyte-split" }) + "\\n";
+const activeLine = JSON.stringify({
+  event: "step_update",
+  status: "ACTIVE",
+  step_type: "agent_response",
+  text_delta: text,
+}) + "\\n";
+
+process.stdout.write(initLine);
+
+const buf = Buffer.from(activeLine, "utf-8");
+const targetCharBuf = Buffer.from(String.fromCodePoint(0xd55c), "utf-8");
+const targetCharIndex = buf.indexOf(targetCharBuf);
+const splitIndex = targetCharIndex + 1;
+
+process.stdout.write(buf.subarray(0, splitIndex));
+
+setTimeout(() => {
+  process.stdout.write(buf.subarray(splitIndex));
+
+  setTimeout(() => {
+    const doneLine = JSON.stringify({
+      event: "step_update",
+      status: "DONE",
+      step_type: "agent_response",
+      text_delta: text,
+    }) + "\\n";
+    const resultLine = JSON.stringify({
+      event: "result",
+      status: "SUCCESS",
+      response: text,
+      conversation_id: "conv-multibyte-split",
+    }) + "\\n";
+
+    process.stdout.write(doneLine);
+    process.stdout.write(resultLine);
+    process.exit(0);
+  }, 50);
+}, 50);
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const texts: string[] = [];
+      const result = await runAgyStream(
+        {
+          binary: mockBinary,
+          prompt: "multibyte test",
+          cwd: tmp,
+          timeoutMs: 5000,
+        },
+        (event) => {
+          if (event.type === "text") {
+            texts.push(event.text);
+          }
+        },
+      );
+
+      const replacementChar = String.fromCodePoint(0xfffd);
+      const emittedText = texts.join("");
+      expect(emittedText).toBe(expectedText);
+      expect(result.stdout).toBe(expectedText);
+      expect(result.stdout).not.toContain(replacementChar);
+      expect(emittedText).not.toContain(replacementChar);
+      expect(result.conversationId).toBe("conv-multibyte-split");
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }

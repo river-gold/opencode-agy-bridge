@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -9,8 +9,15 @@ import { createOpencodeClient } from "@opencode-ai/sdk";
 
 const FIRST = "FIRST_REQUEST_MARKER";
 const SECOND = "SECOND_REQUEST_MARKER";
+const ABORT = "ABORT_REQUEST_MARKER";
+const THIRD = "THIRD_REQUEST_MARKER";
+const TITLE_REQUEST = "Generate a title for this conversation:";
 const FIRST_OUTPUT = "E2E_FIRST_OUTPUT";
 const SECOND_OUTPUT = "E2E_SECOND_OUTPUT";
+const THIRD_OUTPUT = "E2E_THIRD_OUTPUT";
+const TITLE_OUTPUT = "E2E_TITLE_OUTPUT";
+const MAIN_CONVERSATION = "mock-conversation-1";
+const TITLE_CONVERSATION = "mock-conversation-title";
 const LOG_LIMIT = 12_000;
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -28,6 +35,22 @@ const bounded = (text: string) => {
 };
 const textOf = (response: { parts: Array<{ type?: string; text?: string }> }) =>
   response.parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("");
+const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const fileExists = async (path: string) => {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+async function waitForFile(path: string, attempts = 100): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (await fileExists(path)) return true;
+    await sleep(100);
+  }
+  return false;
+}
 
 function waitForServer(child: ChildProcess, logs: string[]): Promise<string> {
   return new Promise((resolveUrl, reject) => {
@@ -85,6 +108,8 @@ const workspace = join(root, "workspace");
 const conversationsDir = join(root, "conversations");
 const stateFile = join(root, "sessions.json");
 const invocationLog = join(root, "agy-invocations.ndjson");
+const abortStart = join(root, "abort-start");
+const abortComplete = join(root, "abort-complete");
 const mock = join(root, "mock-agy.mjs");
 let server: ChildProcess | undefined;
 const logs: string[] = [];
@@ -97,18 +122,27 @@ try {
   assert.equal(gitStatus.status, 0, "git status failed");
   assert.equal(gitStatus.stdout, "", "workspace must start with a clean git status");
   await writeFile(mock, `#!${process.execPath}
-import { appendFileSync } from "node:fs";
+ import { appendFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.E2E_AGY_LOG, JSON.stringify({ cwd: process.cwd(), argv: args }) + "\\n");
 if (args[0] === "models" || !args.includes("--output-format") || !args.includes("stream-json")) process.exit(41);
 const prompt = args[args.indexOf("-p") + 1] ?? "";
-if (!prompt.includes("${FIRST}") && !prompt.includes("${SECOND}")) process.exit(42);
-const output = prompt.includes("${SECOND}") ? "${SECOND_OUTPUT}" : "${FIRST_OUTPUT}";
-const conversation = "mock-conversation-1";
+if (prompt.includes("${ABORT}") && !prompt.includes("${THIRD}")) {
+  writeFileSync(process.env.E2E_AGY_ABORT_START, "");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
+  writeFileSync(process.env.E2E_AGY_ABORT_COMPLETE, "");
+  console.log(JSON.stringify({ event: "init", conversation_id: "${MAIN_CONVERSATION}" }));
+   console.log(JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: "${ABORT}", state: "DONE", conversation_id: "${MAIN_CONVERSATION}" } }));
+   console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "${ABORT}", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, conversation_id: "${MAIN_CONVERSATION}" } }));
+  process.exit(0);
+}
+if (!prompt.includes("${TITLE_REQUEST}") && !prompt.includes("${FIRST}") && !prompt.includes("${SECOND}") && !prompt.includes("${THIRD}")) process.exit(42);
+const title = prompt.includes("${TITLE_REQUEST}");
+const output = title ? "${TITLE_OUTPUT}" : prompt.includes("${THIRD}") ? "${THIRD_OUTPUT}" : prompt.includes("${SECOND}") ? "${SECOND_OUTPUT}" : "${FIRST_OUTPUT}";
+const conversation = title ? "${TITLE_CONVERSATION}" : "${MAIN_CONVERSATION}";
 console.log(JSON.stringify({ event: "init", conversation_id: conversation }));
-console.log(JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: output, status: "ACTIVE", conversation_id: conversation } }));
-console.log(JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: output, status: "DONE", conversation_id: conversation } }));
-console.log(JSON.stringify({ event: "result", conversation_id: conversation, result: { status: "SUCCESS", response: output, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } }));
+console.log(JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: output, state: "DONE", conversation_id: conversation } }));
+console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: output, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, conversation_id: conversation } }));
 `, "utf8");
   await chmod(mock, 0o755);
   const configContent = JSON.stringify({
@@ -120,7 +154,7 @@ console.log(JSON.stringify({ event: "result", conversation_id: conversation, res
       options: { binary: mock, conversationsDir, stateFile, timeoutMs: 5_000 },
       models: { "e2e-model": { name: "E2E model", limit: { context: 8_192, output: 1_024 } } },
     } },
-    agent: { title: { disable: true } },
+    agent: { title: { model: "agy/e2e-model" } },
     autoupdate: false, compaction: { auto: false }, snapshot: false, share: "disabled", lsp: false, formatter: false,
   });
   const serverUsername = `e2e-${randomBytes(12).toString("hex")}`;
@@ -134,7 +168,8 @@ console.log(JSON.stringify({ event: "result", conversation_id: conversation, res
     OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: "1", OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_DISABLE_AUTOCOMPACT: "1", OPENCODE_DISABLE_MODELS_FETCH: "1",
     OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_SERVER_PASSWORD: serverPassword,
-    OPENCODE_SERVER_USERNAME: serverUsername, E2E_AGY_LOG: invocationLog,
+     OPENCODE_SERVER_USERNAME: serverUsername, E2E_AGY_LOG: invocationLog,
+     E2E_AGY_ABORT_START: abortStart, E2E_AGY_ABORT_COMPLETE: abortComplete,
     OPENCODE_LOG_LEVEL: "DEBUG", OPENCODE_PRINT_LOGS: "1", LANG: process.env.LANG ?? "C.UTF-8", TMPDIR: root,
   };
   await writeFile(invocationLog, "", "utf8");
@@ -142,33 +177,120 @@ console.log(JSON.stringify({ event: "result", conversation_id: conversation, res
   const baseUrl = await waitForServer(server, logs);
   const auth = Buffer.from(`${env.OPENCODE_SERVER_USERNAME}:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64");
   const client = createOpencodeClient({ baseUrl, directory: workspace, headers: { Authorization: `Basic ${auth}` } });
-  const created = await client.session.create({ body: { title: "agy E2E session" }, signal: AbortSignal.timeout(10_000) });
+   const created = await client.session.create({ body: {}, signal: AbortSignal.timeout(10_000) });
   assert.ok(created.data, `session was not created (${created.response.status}): ${JSON.stringify(created.error ?? {})}`);
   const sessionID = created.data.id;
   const prompt = (text: string) => client.session.prompt({ path: { id: sessionID }, body: { model: { providerID: "agy", modelID: "e2e-model" }, parts: [{ type: "text", text }] }, signal: AbortSignal.timeout(10_000) });
-  const first = await prompt(FIRST);
-  assert.ok(first.data, "first response was empty");
-  assert.equal(textOf(first.data), FIRST_OUTPUT, JSON.stringify(first.data));
-  const second = await prompt(SECOND);
-  assert.ok(second.data, "second response was empty");
-  assert.equal(textOf(second.data), SECOND_OUTPUT);
-  const invocations = (await readFile(invocationLog, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Invocation);
-  assert.equal(invocations.length, 2);
-  for (const invocation of invocations) {
-    assert.equal(invocation.cwd, workspace);
-    assert.notEqual(invocation.cwd, serverCwd);
-    assert.equal(invocation.argv[invocation.argv.indexOf("--add-dir") + 1], workspace);
-    assert.equal(invocation.argv[invocation.argv.indexOf("--model") + 1], "e2e-model");
-    assert.ok(invocation.argv.includes("--dangerously-skip-permissions"));
-  }
-  assert.equal(invocations[0].argv.includes("--conversation"), false);
-  assert.equal(invocations[1].argv[invocations[1].argv.indexOf("--conversation") + 1], "mock-conversation-1");
-  const secondPrompt = invocations[1].argv[invocations[1].argv.indexOf("-p") + 1] ?? "";
-  assert.match(secondPrompt, new RegExp(SECOND));
-  assert.doesNotMatch(secondPrompt, new RegExp(`${FIRST}|${FIRST_OUTPUT}`));
-  const persisted = JSON.parse(await readFile(stateFile, "utf8")) as { sessions: Record<string, unknown> };
-  assert.deepEqual(Object.keys(persisted.sessions), [sessionID]);
-  console.log("OpenCode agy E2E passed");
+   const first = await prompt(FIRST);
+   assert.ok(first.data, "first response was empty");
+   assert.equal(textOf(first.data), FIRST_OUTPUT, JSON.stringify(first.data));
+
+   let lastTitle: string | undefined;
+   let titleReady = false;
+   const titleDeadline = Date.now() + 10_000;
+   for (let remaining = 10_000; remaining >= 0; remaining = titleDeadline - Date.now()) {
+     const session = await client.session.get({ path: { id: sessionID }, signal: AbortSignal.timeout(10_000) });
+     lastTitle = session.data?.title;
+     if (lastTitle === TITLE_OUTPUT) {
+       titleReady = true;
+       break;
+     }
+     const waitMs = titleDeadline - Date.now();
+     if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(100, waitMs)));
+   }
+   if (!titleReady) assert.fail(`session title was not generated within 10 seconds; last title: ${lastTitle ?? "<none>"}`);
+
+   const second = await prompt(SECOND);
+   assert.ok(second.data, "second response was empty");
+   assert.equal(textOf(second.data), SECOND_OUTPUT);
+   const invocations = (await readFile(invocationLog, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Invocation);
+   assert.equal(invocations.length, 3);
+   for (const invocation of invocations) {
+     assert.equal(invocation.cwd, workspace);
+     assert.notEqual(invocation.cwd, serverCwd);
+     assert.equal(invocation.argv[invocation.argv.indexOf("--add-dir") + 1], workspace);
+     assert.equal(invocation.argv[invocation.argv.indexOf("--model") + 1], "e2e-model");
+     assert.ok(invocation.argv.includes("--dangerously-skip-permissions"));
+   }
+   const promptOf = (invocation: Invocation) => invocation.argv[invocation.argv.indexOf("-p") + 1] ?? "";
+   const titleMatches = invocations.filter((invocation) => promptOf(invocation).includes(TITLE_REQUEST));
+   const firstMatches = invocations.filter((invocation) =>
+     promptOf(invocation).includes(FIRST) && !promptOf(invocation).includes(TITLE_REQUEST) && !promptOf(invocation).includes(SECOND),
+   );
+   const secondMatches = invocations.filter((invocation) => promptOf(invocation).includes(SECOND));
+   assert.equal(titleMatches.length, 1);
+   assert.equal(firstMatches.length, 1);
+   assert.equal(secondMatches.length, 1);
+   const titleInvocation = titleMatches[0];
+   const firstInvocation = firstMatches[0];
+   const secondInvocation = secondMatches[0];
+   assert.ok(titleInvocation);
+   assert.ok(firstInvocation);
+   assert.ok(secondInvocation);
+   assert.equal(titleInvocation.argv.includes("--conversation"), false);
+   const titlePrompt = promptOf(titleInvocation);
+   assert.match(titlePrompt, new RegExp(TITLE_REQUEST));
+   assert.match(titlePrompt, new RegExp(FIRST));
+   assert.doesNotMatch(titlePrompt, new RegExp(SECOND));
+   assert.equal(firstInvocation.argv.includes("--conversation"), false);
+   assert.equal(secondInvocation.argv[secondInvocation.argv.indexOf("--conversation") + 1], MAIN_CONVERSATION);
+   const secondPrompt = promptOf(secondInvocation);
+   assert.match(secondPrompt, new RegExp(SECOND));
+   assert.doesNotMatch(secondPrompt, new RegExp(`${FIRST}|${FIRST_OUTPUT}`));
+   const session = await client.session.get({ path: { id: sessionID }, signal: AbortSignal.timeout(10_000) });
+   assert.ok(session.data, "session was not found");
+   assert.equal(session.data.title, TITLE_OUTPUT);
+   const persisted = JSON.parse(await readFile(stateFile, "utf8")) as { sessions: Record<string, { conversationId: string | null }> };
+   assert.deepEqual(Object.keys(persisted.sessions).sort(), [sessionID, `${sessionID}:title`].sort());
+    assert.equal(persisted.sessions[sessionID]?.conversationId, MAIN_CONVERSATION);
+    assert.equal(persisted.sessions[`${sessionID}:title`]?.conversationId, TITLE_CONVERSATION);
+
+    const abort = await client.session.promptAsync({
+      path: { id: sessionID },
+      body: { model: { providerID: "agy", modelID: "e2e-model" }, parts: [{ type: "text", text: ABORT }] },
+      signal: AbortSignal.timeout(10_000),
+    });
+    assert.equal(abort.response.status, 204);
+    assert.equal(await waitForFile(abortStart), true, "abort did not start");
+
+    let busy = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const statuses = await client.session.status({ signal: AbortSignal.timeout(10_000) });
+      if (statuses.data?.[sessionID]?.type === "busy") {
+        busy = true;
+        break;
+      }
+      await sleep(100);
+    }
+    assert.equal(busy, true, "session did not become busy during abort");
+
+    const abortResponse = await client.session.abort({ path: { id: sessionID }, signal: AbortSignal.timeout(10_000) });
+    assert.equal(abortResponse.response.status, 200);
+    assert.equal(abortResponse.data, true);
+
+    let stopped = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const statuses = await client.session.status({ signal: AbortSignal.timeout(10_000) });
+      const type = statuses.data?.[sessionID]?.type;
+      if (type === undefined || type === "idle") {
+        stopped = true;
+        break;
+      }
+      await sleep(100);
+    }
+    assert.equal(stopped, true, "session did not stop after abort");
+    assert.equal(server.exitCode, null);
+    assert.equal(server.signalCode, null);
+    assert.equal(await fileExists(abortComplete), false, "aborted process completed");
+
+    const third = await prompt(THIRD);
+    assert.ok(third.data, "third response was empty");
+    assert.equal(textOf(third.data), THIRD_OUTPUT);
+    const afterAbortInvocations = (await readFile(invocationLog, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Invocation);
+    const thirdInvocation = afterAbortInvocations.find((invocation) => promptOf(invocation).includes(THIRD));
+    assert.ok(thirdInvocation);
+    assert.equal(thirdInvocation.argv[thirdInvocation.argv.indexOf("--conversation") + 1], MAIN_CONVERSATION);
+    console.log("OpenCode agy E2E passed");
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   const logDir = join(data, "opencode", "log");

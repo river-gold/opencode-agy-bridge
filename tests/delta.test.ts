@@ -93,4 +93,43 @@ describe("extractDelta", () => {
     const full = "...TRUNCATED...\n" + marker + "\nHere is the new response.";
     expect(extractDelta(prev, full, true)).toBe("Here is the new response.");
   });
+
+  test("returns full text when prev appears after a quote in the new answer", () => {
+    const prev = "the old conclusion";
+    const full =
+      "I disagree.\n> someone said the old conclusion\nMy new conclusion is different.";
+    expect(extractDelta(prev, full, true)).toBe(full);
+  });
+
+  test("returns full text when prev last line appears inside a fenced code block", () => {
+    const prev =
+      "Hello! I can help you with that.\nLet me build a React application for you.\n";
+    const full =
+      "```\nLet me build a React application for you.\nconsole.log(1);\n```\nHere is a different answer.";
+    expect(extractDelta(prev, full, true)).toBe(full);
+  });
+
+  test("returns full text when prev is a non-boundary prefix of a new answer", () => {
+    const prev = "same text";
+    const full = "same textual prefix, but this is a new answer";
+    expect(extractDelta(prev, full, true)).toBe(full);
+  });
+
+  test("returns full text when long repeated tail appears inside a fenced code block", () => {
+    const marker = "UNIQUE_TAIL_".repeat(20);
+    const prev = "Old conversation prefix\n" + marker;
+    const full = "```\n" + marker + "\n```\nFresh analysis follows.";
+    expect(extractDelta(prev, full, true)).toBe(full);
+  });
+
+  test("aligns truncated output to last 150 chars of a non-repeating spaced tail", () => {
+    const prefix = "P".repeat(400);
+    const suffix =
+      "once upon a draft the prior reply listed unique words like amber birch cedar " +
+      "dawn ember flint grove haven ivory jasper kelp lunar maple north olive pine";
+    const prev = prefix + suffix;
+    const tail = prev.slice(-150);
+    const full = "...TRUNCATED...\n" + tail + "\nHere is the new response.";
+    expect(extractDelta(prev, full, true)).toBe("Here is the new response.");
+  });
 });

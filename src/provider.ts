@@ -10,7 +10,7 @@ import type {
 import { runAgyStream } from "./agy-runner.js";
 import { snapshot, findNewConversation, defaultConversationsDir } from "./conversation-tracker.js";
 import { SessionStore } from "./session-store.js";
-import { flattenPrompt } from "./prompt-mapper.js";
+import { mapPrompt } from "./prompt-mapper.js";
 import { randomUUID } from "node:crypto";
 
 export interface AgyProviderOptions {
@@ -63,40 +63,46 @@ export function extractDelta(
   const normPrev = normalize(prevOutput);
   const normFull = normalize(fullText);
 
-  if (normFull.startsWith(normPrev)) {
-    return normFull.slice(normPrev.length).replace(/^\n+/, "");
+  const output = normFull.replace(
+    /^(?:(?:[ \t]*\n+)|(?:WARNING:|Update available:|\.\.\.TRUNCATED\.\.\.)[^\n]*(?:\n|$))+/, "",
+  );
+
+  const hasBoundary = (text: string, start: number) =>
+    text.endsWith("\n") || start + text.length === output.length ||
+    /\s/.test(output[start + text.length]);
+
+  if (output.startsWith(normPrev) && hasBoundary(normPrev, 0)) {
+    return output.slice(normPrev.length).replace(/^\n+/, "");
   }
 
   const normPrevTrimmed = normPrev.trimEnd();
-  if (normFull.startsWith(normPrevTrimmed)) {
-    return normFull.slice(normPrevTrimmed.length).replace(/^\s+/, "");
-  }
-
-  const idx = normFull.indexOf(normPrevTrimmed);
-  if (idx !== -1) {
-    return normFull.slice(idx + normPrevTrimmed.length).replace(/^\s+/, "");
+  if (output.startsWith(normPrevTrimmed) && hasBoundary(normPrevTrimmed, 0)) {
+    return output.slice(normPrevTrimmed.length).replace(/^\s+/, "");
   }
 
   const lines = normPrevTrimmed.split("\n").filter((l) => l.trim());
-  if (lines.length > 0) {
-    const lastLine = lines[lines.length - 1].trim();
-    if (lastLine.length >= 10) {
-      const lastLineIdx = normFull.indexOf(lastLine);
-      if (lastLineIdx !== -1) {
-        return normFull.slice(lastLineIdx + lastLine.length).replace(/^\s+/, "");
-      }
+  if (lines.length > 1) {
+    const lastLine = lines[lines.length - 1].trimEnd();
+    if (lastLine.length >= 10 && output.startsWith(lastLine) && hasBoundary(lastLine, 0)) {
+      return output.slice(lastLine.length).replace(/^\s+/, "");
     }
   }
 
-  const tailLength = 150;
-  const tail = normPrevTrimmed.length > tailLength
-    ? normPrevTrimmed.slice(-tailLength)
-    : normPrevTrimmed;
-
+  const tail = normPrevTrimmed.length > 150 ? normPrevTrimmed.slice(-150) : normPrevTrimmed;
+  const firstTokenMatch = output.match(/\S+/);
   if (tail.length >= 20) {
-    const tailIdx = normFull.lastIndexOf(tail);
-    if (tailIdx !== -1) {
-      return normFull.slice(tailIdx + tail.length).replace(/^\s+/, "");
+    let tailStart: number | undefined;
+    if (output.startsWith(tail)) {
+      tailStart = 0;
+    } else if (firstTokenMatch) {
+      const firstTokenStart = firstTokenMatch.index ?? 0;
+      const firstToken = firstTokenMatch[0];
+      if (firstToken.endsWith(tail)) {
+        tailStart = firstTokenStart + firstToken.length - tail.length;
+      }
+    }
+    if (tailStart !== undefined && hasBoundary(tail, tailStart)) {
+      return output.slice(tailStart + tail.length).replace(/^\s+/, "");
     }
   }
 
@@ -114,30 +120,66 @@ function buildLanguageModel(
   const runTurn = async (
     callOpts: LanguageModelV2CallOptions,
     onText?: (text: string) => void,
+    onWarnings?: (warnings: LanguageModelV2CallWarning[]) => void,
   ) => {
+    const deadline = Date.now() + (opts.timeoutMs ?? 300_000);
+    const remainingTimeout = () => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new Error("agy timed out");
+      }
+      return remaining;
+    };
+
     const sessionId =
       (callOpts.headers?.["x-agy-session-id"] as string) ??
       (callOpts.providerOptions?.agy as Record<string, unknown> | undefined)
         ?.sessionId as string ??
       randomUUID();
+    const scope = callOpts.headers?.["x-agy-session-scope"] as string | undefined;
+    const sessionKey = typeof scope === "string" && scope.length > 0
+      ? `${sessionId}:${scope}`
+      : sessionId;
 
-    const entry = await store.getEntry(sessionId);
-    let conversationId = entry?.conversationId ?? null;
-
+    let entry: Awaited<ReturnType<SessionStore["getEntry"]>>;
+    let conversationId: string | null = null;
     let releaseBindingLock: (() => Promise<void>) | null = null;
-    if (!conversationId) {
-      releaseBindingLock = await SessionStore.acquireBindingLock();
-    }
-
     let before: Set<string> | null = null;
     try {
+      entry = await store.getEntry(sessionKey);
+      remainingTimeout();
+      conversationId = entry?.conversationId ?? null;
+
+      if (!conversationId) {
+        try {
+          releaseBindingLock = await SessionStore.acquireBindingLock({
+            abortSignal: callOpts.abortSignal,
+            timeoutMs: remainingTimeout(),
+          });
+        } catch (error) {
+          if (error instanceof Error && error.name === "TimeoutError") {
+            throw new Error("agy timed out");
+          }
+          throw error;
+        }
+      }
+
+      if (!conversationId) {
+        entry = await store.getEntry(sessionKey);
+        remainingTimeout();
+        conversationId = entry?.conversationId ?? null;
+      }
       before = conversationId ? null : await snapshot(conversationsDir);
+      remainingTimeout();
 
       const newMessages = conversationId
         ? boundTurnPrompt(callOpts.prompt)
         : callOpts.prompt;
 
-      const prompt = flattenPrompt(newMessages);
+      const mapped = mapPrompt(newMessages);
+      const prompt = mapped.prompt;
+      onWarnings?.(mapped.warnings);
+      remainingTimeout();
       if (conversationId && !prompt.trim()) {
         throw new Error("agy bound turn has no current-turn text");
       }
@@ -151,8 +193,7 @@ function buildLanguageModel(
 
       const rawModel = remappedModel ??
         modelOpts?.model ??
-        modelId ??
-        opts.model;
+        modelId;
       const rawEffort = usedRemap
         ? (typeof providerAgyOpts?.effort === "string" ? providerAgyOpts.effort : undefined)
         : (providerAgyOpts?.effort as string) ??
@@ -172,7 +213,7 @@ function buildLanguageModel(
           effort,
           binary: opts.binary,
           extraArgs: opts.extraArgs,
-          timeoutMs: opts.timeoutMs,
+          timeoutMs: remainingTimeout(),
           abortSignal: callOpts.abortSignal,
         },
         (event) => {
@@ -197,10 +238,10 @@ function buildLanguageModel(
         }
       }
 
-      let prevOutput = prevOutputs.get(sessionId) ?? "";
+      let prevOutput = prevOutputs.get(sessionKey) ?? "";
       if (!prevOutput && entry?.prevOutput) {
         prevOutput = entry.prevOutput;
-        prevOutputs.set(sessionId, prevOutput);
+        prevOutputs.set(sessionKey, prevOutput);
       }
 
       const delta = extractDelta(prevOutput, result.stdout, !!conversationId);
@@ -210,13 +251,13 @@ function buildLanguageModel(
       }
 
       if (conversationId) {
-        prevOutputs.set(sessionId, result.stdout);
+        prevOutputs.set(sessionKey, result.stdout);
       } else {
-        prevOutputs.delete(sessionId);
+        prevOutputs.delete(sessionKey);
       }
 
       await store.set(
-        sessionId,
+        sessionKey,
         conversationId,
         conversationId ? result.stdout : "",
       );
@@ -231,6 +272,7 @@ function buildLanguageModel(
         },
         providerMetadata: {
           agy: {
+            modelId,
             sessionId,
             conversationId: conversationId ?? null,
           },
@@ -240,7 +282,7 @@ function buildLanguageModel(
           timestamp: new Date(),
           modelId,
         },
-        warnings: [] as LanguageModelV2CallWarning[],
+        warnings: mapped.warnings,
       };
     } finally {
       if (releaseBindingLock) {
@@ -254,47 +296,85 @@ function buildLanguageModel(
   };
 
   const doStream = async (callOpts: LanguageModelV2CallOptions) => {
+    const local = new AbortController();
+    let cancelled = false;
+    const onAbort = () => local.abort(callOpts.abortSignal?.reason);
+    if (callOpts.abortSignal?.aborted) {
+      local.abort(callOpts.abortSignal.reason);
+    } else {
+      callOpts.abortSignal?.addEventListener("abort", onAbort, { once: true });
+    }
+
     const stream = new ReadableStream<LanguageModelV2StreamPart>({
+      cancel(reason) {
+        cancelled = true;
+        local.abort(reason);
+      },
       async start(controller) {
         let textStarted = false;
+        let streamStarted = false;
+        const enqueue = (part: LanguageModelV2StreamPart) => {
+          if (!cancelled) controller.enqueue(part);
+        };
+        const close = () => {
+          if (!cancelled) controller.close();
+        };
         try {
-          controller.enqueue({
-            type: "stream-start",
-            warnings: [],
-          });
-
-          const result = await runTurn(callOpts, (text) => {
-            if (!textStarted) {
-              controller.enqueue({
-                type: "text-start",
+          const result = await runTurn(
+            { ...callOpts, abortSignal: local.signal },
+            (text) => {
+              if (!textStarted) {
+                enqueue({
+                  type: "text-start",
+                  id: "agy-1",
+                });
+                textStarted = true;
+              }
+              enqueue({
+                type: "text-delta",
                 id: "agy-1",
+                delta: text,
               });
-              textStarted = true;
-            }
-            controller.enqueue({
-              type: "text-delta",
-              id: "agy-1",
-              delta: text,
-            });
-          });
+            },
+            (warnings) => {
+              if (!streamStarted) {
+                enqueue({
+                  type: "stream-start",
+                  warnings,
+                });
+                streamStarted = true;
+              }
+            },
+          );
 
           if (textStarted) {
-            controller.enqueue({
+            enqueue({
               type: "text-end",
               id: "agy-1",
             });
           }
 
-          controller.enqueue({
+          enqueue({
             type: "finish",
             finishReason: result.finishReason,
             usage: result.usage,
           });
 
-          controller.close();
+          close();
         } catch (err) {
-          controller.enqueue({ type: "error", error: String(err) });
-          controller.close();
+          if (!cancelled) {
+            if (!streamStarted) {
+              enqueue({
+                type: "stream-start",
+                warnings: [],
+              });
+              streamStarted = true;
+            }
+            enqueue({ type: "error", error: String(err) });
+            close();
+          }
+        } finally {
+          callOpts.abortSignal?.removeEventListener("abort", onAbort);
         }
       },
     });
@@ -339,14 +419,21 @@ function unsupportedImageModel(modelId: string): ImageModelV2 {
 
 export function createAgyProvider(
   opts?: AgyProviderOptions,
-): ProviderV2 & { (modelId: string): LanguageModelV2; provider: string } {
+): ProviderV2 & {
+  (modelId?: string, modelOpts?: { effort?: string; model?: string }): LanguageModelV2;
+  provider: string;
+} {
   const resolvedOpts = opts ?? {};
 
   const factory = (
-    modelId: string,
+    modelId?: string,
     modelOpts?: { effort?: string; model?: string },
   ): LanguageModelV2 => {
-    return buildLanguageModel(modelId, resolvedOpts, modelOpts);
+    const resolvedModelId = modelId?.trim() ? modelId : resolvedOpts.model;
+    if (!resolvedModelId?.trim()) {
+      throw new Error("agy model id is required");
+    }
+    return buildLanguageModel(resolvedModelId, resolvedOpts, modelOpts);
   };
 
   factory.provider = "agy";
@@ -355,7 +442,10 @@ export function createAgyProvider(
   factory.textEmbeddingModel = (modelId: string) => unsupportedEmbeddingModel(modelId);
   factory.imageModel = (modelId: string) => unsupportedImageModel(modelId);
 
-  return factory as ProviderV2 & { (modelId: string): LanguageModelV2; provider: string };
+  return factory as ProviderV2 & {
+    (modelId?: string, modelOpts?: { effort?: string; model?: string }): LanguageModelV2;
+    provider: string;
+  };
 }
 
 export default function defaultFactory(

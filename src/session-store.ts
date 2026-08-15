@@ -27,6 +27,8 @@ interface LockIdentity {
 export interface AcquireLockOptions {
   staleTimeoutMs?: number;
   isAlive?: (pid: number) => boolean;
+  abortSignal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 const DEFAULT_STALE_TIMEOUT_MS = 30_000;
@@ -39,8 +41,65 @@ function defaultBindingLockPath(): string {
   return join(homedir(), ".opencode-agy-plugin", "binding.lock");
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function abortError(signal: AbortSignal): Error {
+  const reason = signal.reason;
+  const error = new Error(reason instanceof Error ? reason.message : "The operation was aborted");
+  error.name = "AbortError";
+  if (reason instanceof Error && reason.stack) {
+    error.stack = reason.stack;
+  }
+  return error;
+}
+
+function timeoutError(): Error {
+  const error = new Error("Timed out acquiring lock");
+  error.name = "TimeoutError";
+  return error;
+}
+
+function throwIfCancelled(signal: AbortSignal | undefined, deadline: number | undefined): void {
+  if (signal?.aborted) {
+    throw abortError(signal);
+  }
+  if (deadline !== undefined && Date.now() >= deadline) {
+    throw timeoutError();
+  }
+}
+
+function sleep(
+  ms: number,
+  signal: AbortSignal | undefined,
+  deadline: number | undefined,
+): Promise<void> {
+  const delay = deadline === undefined ? ms : Math.min(ms, Math.max(0, deadline - Date.now()));
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(abortError(signal!));
+    };
+
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    timer = setTimeout(() => {
+      cleanup();
+      if (deadline !== undefined && Date.now() >= deadline) {
+        reject(timeoutError());
+      } else {
+        resolve();
+      }
+    }, delay);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function errCode(error: unknown): string | undefined {
@@ -169,12 +228,20 @@ async function acquireLock(
 ): Promise<() => Promise<void>> {
   let backoff = 1;
   const maxBackoff = 500;
+  const deadline = options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
   for (;;) {
+    throwIfCancelled(options.abortSignal, deadline);
     const got = await tryAcquireLock(lockPath, options);
     if (got) {
+      try {
+        throwIfCancelled(options.abortSignal, deadline);
+      } catch (error) {
+        await got();
+        throw error;
+      }
       return got;
     }
-    await sleep(backoff);
+    await sleep(backoff, options.abortSignal, deadline);
     backoff = Math.min(backoff * 2, maxBackoff);
   }
 }
@@ -190,8 +257,8 @@ export class SessionStore {
    * Acquires a global lock for the bind-while-running phase.
    * Prevents concurrent agy instances from creating ambiguous .pb files.
    */
-  static acquireBindingLock(): Promise<() => Promise<void>> {
-    return acquireLock(defaultBindingLockPath());
+  static acquireBindingLock(options: AcquireLockOptions = {}): Promise<() => Promise<void>> {
+    return acquireLock(defaultBindingLockPath(), options);
   }
 
   async getEntry(sessionId: string): Promise<StoreEntry | null> {

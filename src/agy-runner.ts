@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 export interface RunAgyInput {
   prompt: string;
@@ -97,6 +98,7 @@ export async function runAgyStream(
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
+    const stdoutDecoder = new StringDecoder("utf-8");
     let stdoutBuffer = "";
     let accumulatedText = "";
     let resultResponse: string | undefined;
@@ -222,12 +224,18 @@ export async function runAgyStream(
         const textDelta =
           (typeof step.text_delta === "string" ? step.text_delta : undefined) ??
           (typeof parsed.text_delta === "string" ? parsed.text_delta : undefined);
+        const state =
+          (typeof step.state === "string" ? step.state : undefined) ??
+          (typeof parsed.state === "string" ? parsed.state : undefined);
         const status =
           (typeof step.status === "string" ? step.status : undefined) ??
           (typeof parsed.status === "string" ? parsed.status : undefined);
 
         if (stepType === "agent_response" && typeof textDelta === "string") {
-          if (status === "DONE") {
+          if (state === "ACTIVE" || state === "DONE") {
+            accumulatedText += textDelta;
+            emitEvent({ type: "text", text: textDelta });
+          } else if (status === "DONE") {
             if (textDelta.startsWith(accumulatedText)) {
               const missingSuffix = textDelta.slice(accumulatedText.length);
               if (missingSuffix) {
@@ -278,7 +286,7 @@ export async function runAgyStream(
     child.stdout.on("data", (chunk: Buffer) => {
       if (settled) return;
       stdoutChunks.push(chunk);
-      stdoutBuffer += chunk.toString("utf-8");
+      stdoutBuffer += stdoutDecoder.write(chunk);
       const lines = stdoutBuffer.split("\n");
       stdoutBuffer = lines.pop() ?? "";
       lines.forEach(processLine);
@@ -298,6 +306,7 @@ export async function runAgyStream(
     child.on("close", (code) => {
       cleanup();
       if (settled) return;
+      stdoutBuffer += stdoutDecoder.end();
       processLine(stdoutBuffer);
 
       const stdout = Buffer.concat(stdoutChunks).toString("utf-8");

@@ -115,6 +115,61 @@ describe("SessionStore", () => {
     await release2();
   }, 40000);
 
+  test("acquireBindingLock rejects with AbortError when aborted while waiting", async () => {
+    const holder = await SessionStore.acquireBindingLock();
+    try {
+      const ac = new AbortController();
+      const waiting = SessionStore.acquireBindingLock({ abortSignal: ac.signal });
+      ac.abort();
+
+      let caughtErr: unknown;
+      try {
+        await waiting;
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      expect(caughtErr).toBeInstanceOf(Error);
+      expect((caughtErr as Error).name).toBe("AbortError");
+    } finally {
+      await holder();
+    }
+  });
+
+  test("acquireBindingLock rejects with TimeoutError and leaves the holder in place", async () => {
+    const holder = await SessionStore.acquireBindingLock();
+    try {
+      let caughtErr: unknown;
+      try {
+        await SessionStore.acquireBindingLock({ timeoutMs: 30 });
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      expect(caughtErr).toBeInstanceOf(Error);
+      expect((caughtErr as Error).name).toBe("TimeoutError");
+      expect((caughtErr as Error).message).toBe("Timed out acquiring lock");
+
+      let stillHeldErr: unknown;
+      try {
+        await SessionStore.acquireBindingLock({ timeoutMs: 30 });
+      } catch (err) {
+        stillHeldErr = err;
+      }
+      expect(stillHeldErr).toBeInstanceOf(Error);
+      expect((stillHeldErr as Error).name).toBe("TimeoutError");
+    } finally {
+      await holder();
+    }
+
+    const next = await SessionStore.acquireBindingLock();
+    try {
+      expect(next).toBeInstanceOf(Function);
+    } finally {
+      await next();
+    }
+  });
+
   test("getEntry rejects on corrupt JSON and leaves file unchanged", async () => {
     const corruptContent = "{\ninvalid json syntax...";
     await writeFile(stateFile, corruptContent, "utf-8");

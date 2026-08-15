@@ -20,11 +20,15 @@ export default function unified(input?: any): any {
         if (incoming?.model?.providerID !== "agy") return;
         if (!output?.headers) return;
         output.headers["x-agy-session-id"] = incoming.sessionID;
+        if (["title", "summary", "compaction"].includes(incoming?.agent)) {
+          output.headers["x-agy-session-scope"] = incoming.agent;
+        }
 
         const modelObj = incoming?.model;
         const providerObj = incoming?.provider;
         const effort =
           incoming?.variant ??
+          (incoming as any)?.message?.model?.variant ??
           modelObj?.options?.reasoningEffort ??
           modelObj?.options?.effort ??
           modelObj?.reasoningEffort ??

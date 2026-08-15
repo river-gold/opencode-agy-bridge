@@ -1,5 +1,10 @@
 import { describe, test, expect } from "bun:test";
-import { flattenPrompt } from "../src/prompt-mapper";
+import { flattenPrompt, mapPrompt } from "../src/prompt-mapper";
+
+const FILE_WARNING = {
+  type: "other" as const,
+  message: "File parts are not supported by the agy provider and were ignored.",
+};
 
 describe("flattenPrompt", () => {
   test("filters out system messages", () => {
@@ -67,6 +72,36 @@ describe("flattenPrompt", () => {
       },
     ]);
     expect(result).toBe("Look at this:");
+  });
+
+  test("mapPrompt omits file parts and returns one warning", () => {
+    const result = mapPrompt([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Look at this:" },
+          { type: "file", data: new Uint8Array(), mediaType: "image/png" },
+        ],
+      },
+    ]);
+    expect(result.prompt).toBe("Look at this:");
+    expect(result.warnings).toEqual([FILE_WARNING]);
+  });
+
+  test("mapPrompt returns one warning for two file parts", () => {
+    const result = mapPrompt([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Look at this:" },
+          { type: "file", data: new Uint8Array(), mediaType: "image/png" },
+          { type: "file", data: new Uint8Array(), mediaType: "image/jpeg" },
+        ],
+      },
+    ]);
+    expect(result.prompt).toBe("Look at this:");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings).toEqual([FILE_WARNING]);
   });
 
   test("handles user message with multiple text parts", () => {

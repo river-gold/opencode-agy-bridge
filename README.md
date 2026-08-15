@@ -10,7 +10,7 @@ This project is developed entirely through vibe coding.
 
 ### Prerequisites
 
-- `agy` CLI installed
+- Latest `agy` CLI installed (compatibility verified with `1.1.13`)
 - `agy` authenticated
 - OpenCode installed
 

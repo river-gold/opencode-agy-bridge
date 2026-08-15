@@ -1,0 +1,1 @@
+- README.md를, docs/README_*.md 중 하나라도 수정하면, 나머지도 업데이트 한다.
