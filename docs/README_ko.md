@@ -18,7 +18,13 @@
 
 ### npm 설치
 
-`~/.config/opencode/opencode.json` 또는 `opencode.jsonc`에 추가한다.
+npm에서 패키지를 설치한다.
+
+```bash
+npm install opencode-agy-plugin
+```
+
+그다음 아래처럼 `plugin` 목록에 `opencode-agy-plugin`을 `~/.config/opencode/opencode.json` 또는 `opencode.jsonc`에 추가한다.
 
 ```jsonc
 {

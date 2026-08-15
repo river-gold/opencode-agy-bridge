@@ -18,7 +18,13 @@
 
 ### npmからインストール
 
-`~/.config/opencode/opencode.json`または`opencode.jsonc`に追加する。
+npmからパッケージをインストールする。
+
+```bash
+npm install opencode-agy-plugin
+```
+
+その後、以下のように`~/.config/opencode/opencode.json`または`opencode.jsonc`の`plugin`リストへ`opencode-agy-plugin`を追加する。
 
 ```jsonc
 {

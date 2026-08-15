@@ -18,7 +18,13 @@
 
 ### 从 npm 安装
 
-将以下内容添加到 `~/.config/opencode/opencode.json` 或 `opencode.jsonc`：
+从 npm 安装该软件包：
+
+```bash
+npm install opencode-agy-plugin
+```
+
+然后如下方配置所示，将 `opencode-agy-plugin` 添加到 `~/.config/opencode/opencode.json` 或 `opencode.jsonc` 的 `plugin` 列表中：
 
 ```jsonc
 {

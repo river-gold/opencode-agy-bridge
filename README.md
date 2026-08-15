@@ -20,7 +20,13 @@ Run `agy` once in a terminal to complete authentication.
 
 ### Install From npm
 
-Add this to `~/.config/opencode/opencode.json` or `opencode.jsonc`:
+Install the package from npm:
+
+```bash
+npm install opencode-agy-plugin
+```
+
+Then add `opencode-agy-plugin` to the `plugin` list in `~/.config/opencode/opencode.json` or `opencode.jsonc` as shown below:
 
 ```jsonc
 {
