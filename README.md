@@ -67,7 +67,7 @@ Point `plugin` to the built file and `npm` to the checkout directory:
   "provider": {
     "agy": {
       "npm": "/home/USER/workspace/opencode-agy-plugin",
-      "name": "Google Antigravity (via agy CLI)"
+      "name": "Antigravity"
     }
   }
 }

@@ -37,12 +37,12 @@ function boundTurnPrompt(prompt: LanguageModelV2CallOptions["prompt"]) {
 
 function parseModelAndEffort(rawModel?: string, existingEffort?: string): { model?: string; effort?: string } {
   let model: string | undefined = rawModel;
-  let effort: string | undefined = existingEffort;
+  let effort: string | undefined = existingEffort?.trim() ? existingEffort : undefined;
 
   if (rawModel?.includes(":")) {
     const [m, e] = rawModel.split(":");
     model = m;
-    effort = effort ?? e;
+    effort = effort ?? (e?.trim() ? e : undefined);
   }
 
   return { model, effort };

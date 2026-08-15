@@ -11,12 +11,15 @@ const FIRST = "FIRST_REQUEST_MARKER";
 const SECOND = "SECOND_REQUEST_MARKER";
 const ABORT = "ABORT_REQUEST_MARKER";
 const THIRD = "THIRD_REQUEST_MARKER";
+const AUTO_MODEL = "AUTO_MODEL_REQUEST_MARKER";
 const TITLE_REQUEST = "Generate a title for this conversation:";
 const FIRST_OUTPUT = "E2E_FIRST_OUTPUT";
 const SECOND_OUTPUT = "E2E_SECOND_OUTPUT";
 const THIRD_OUTPUT = "E2E_THIRD_OUTPUT";
+const AUTO_MODEL_OUTPUT = "E2E_AUTO_MODEL_OUTPUT";
 const TITLE_OUTPUT = "E2E_TITLE_OUTPUT";
 const MAIN_CONVERSATION = "mock-conversation-1";
+const AUTO_CONVERSATION = "mock-conversation-auto";
 const TITLE_CONVERSATION = "mock-conversation-title";
 const LOG_LIMIT = 12_000;
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -122,24 +125,29 @@ try {
   assert.equal(gitStatus.status, 0, "git status failed");
   assert.equal(gitStatus.stdout, "", "workspace must start with a clean git status");
   await writeFile(mock, `#!${process.execPath}
- import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
+if (args[0] === "models") {
+  console.log("auto-model-high\\tAuto Model (High)\\nauto-model-low\\tAuto Model (Low)\\ne2e-model\\tE2E model");
+  process.exit(0);
+}
 appendFileSync(process.env.E2E_AGY_LOG, JSON.stringify({ cwd: process.cwd(), argv: args }) + "\\n");
-if (args[0] === "models" || !args.includes("--output-format") || !args.includes("stream-json")) process.exit(41);
+if (!args.includes("--output-format") || !args.includes("stream-json")) process.exit(41);
 const prompt = args[args.indexOf("-p") + 1] ?? "";
 if (prompt.includes("${ABORT}") && !prompt.includes("${THIRD}")) {
   writeFileSync(process.env.E2E_AGY_ABORT_START, "");
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
   writeFileSync(process.env.E2E_AGY_ABORT_COMPLETE, "");
   console.log(JSON.stringify({ event: "init", conversation_id: "${MAIN_CONVERSATION}" }));
-   console.log(JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: "${ABORT}", state: "DONE", conversation_id: "${MAIN_CONVERSATION}" } }));
-   console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "${ABORT}", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, conversation_id: "${MAIN_CONVERSATION}" } }));
+  console.log(JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: "${ABORT}", state: "DONE", conversation_id: "${MAIN_CONVERSATION}" } }));
+  console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "${ABORT}", usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, conversation_id: "${MAIN_CONVERSATION}" } }));
   process.exit(0);
 }
-if (!prompt.includes("${TITLE_REQUEST}") && !prompt.includes("${FIRST}") && !prompt.includes("${SECOND}") && !prompt.includes("${THIRD}")) process.exit(42);
+if (!prompt.includes("${TITLE_REQUEST}") && !prompt.includes("${FIRST}") && !prompt.includes("${SECOND}") && !prompt.includes("${THIRD}") && !prompt.includes("${AUTO_MODEL}")) process.exit(42);
 const title = prompt.includes("${TITLE_REQUEST}");
-const output = title ? "${TITLE_OUTPUT}" : prompt.includes("${THIRD}") ? "${THIRD_OUTPUT}" : prompt.includes("${SECOND}") ? "${SECOND_OUTPUT}" : "${FIRST_OUTPUT}";
-const conversation = title ? "${TITLE_CONVERSATION}" : "${MAIN_CONVERSATION}";
+const auto = prompt.includes("${AUTO_MODEL}");
+const output = title ? "${TITLE_OUTPUT}" : auto ? "${AUTO_MODEL_OUTPUT}" : prompt.includes("${THIRD}") ? "${THIRD_OUTPUT}" : prompt.includes("${SECOND}") ? "${SECOND_OUTPUT}" : "${FIRST_OUTPUT}";
+const conversation = title ? "${TITLE_CONVERSATION}" : auto ? "${AUTO_CONVERSATION}" : "${MAIN_CONVERSATION}";
 console.log(JSON.stringify({ event: "init", conversation_id: conversation }));
 console.log(JSON.stringify({ event: "step_update", step_update: { step_type: "agent_response", text_delta: output, state: "DONE", conversation_id: conversation } }));
 console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: output, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }, conversation_id: conversation } }));
@@ -152,7 +160,6 @@ console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", respo
       npm: pathToFileURL(join(repoRoot, "dist/index.js")).href,
       name: "agy E2E",
       options: { binary: mock, conversationsDir, stateFile, timeoutMs: 5_000 },
-      models: { "e2e-model": { name: "E2E model", limit: { context: 8_192, output: 1_024 } } },
     } },
     agent: { title: { model: "agy/e2e-model" } },
     autoupdate: false, compaction: { auto: false }, snapshot: false, share: "disabled", lsp: false, formatter: false,
@@ -290,6 +297,33 @@ console.log(JSON.stringify({ event: "result", result: { status: "SUCCESS", respo
     const thirdInvocation = afterAbortInvocations.find((invocation) => promptOf(invocation).includes(THIRD));
     assert.ok(thirdInvocation);
     assert.equal(thirdInvocation.argv[thirdInvocation.argv.indexOf("--conversation") + 1], MAIN_CONVERSATION);
+
+    const autoSession = await client.session.create({ body: {}, signal: AbortSignal.timeout(10_000) });
+    assert.ok(autoSession.data, `auto model session was not created (${autoSession.response.status}): ${JSON.stringify(autoSession.error ?? {})}`);
+    const autoSessionID = autoSession.data.id;
+    const autoResponse = await client.session.prompt({
+      path: { id: autoSessionID },
+      body: {
+        model: { providerID: "agy", modelID: "auto-model" },
+        parts: [{ type: "text", text: AUTO_MODEL }],
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    assert.ok(autoResponse.data, "auto model response was empty");
+    assert.equal(textOf(autoResponse.data), AUTO_MODEL_OUTPUT, JSON.stringify(autoResponse.data));
+
+    const finalInvocations = (await readFile(invocationLog, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Invocation);
+    const autoInvocation = finalInvocations.find((invocation) =>
+      promptOf(invocation).includes(AUTO_MODEL) &&
+      invocation.argv[invocation.argv.indexOf("--model") + 1] === "auto-model",
+    );
+    assert.ok(autoInvocation, "auto model invocation was not found");
+    assert.equal(autoInvocation.cwd, workspace);
+    assert.notEqual(autoInvocation.cwd, serverCwd);
+    assert.equal(autoInvocation.argv[autoInvocation.argv.indexOf("--add-dir") + 1], workspace);
+    assert.equal(autoInvocation.argv[autoInvocation.argv.indexOf("--model") + 1], "auto-model");
+    assert.equal(autoInvocation.argv.includes("--effort"), false, "argv must not contain --effort when effort is unspecified");
+    assert.ok(autoInvocation.argv.includes("--dangerously-skip-permissions"));
     console.log("OpenCode agy E2E passed");
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);

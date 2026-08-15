@@ -62,6 +62,46 @@ exit 0
     }
   });
 
+  test("omits --effort for trailing colon or empty effort", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+echo "$@"
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      const cases: Array<{ modelId: string; effort?: string }> = [
+        { modelId: "gemini-3.6-flash:" },
+        { modelId: "gemini-3.6-flash", effort: "" },
+      ];
+
+      for (const c of cases) {
+        const provider = createAgyProvider({
+          binary: mockBinary,
+          conversationsDir: tmp,
+          stateFile: join(tmp, "sessions.json"),
+          ...(c.effort !== undefined ? { effort: c.effort } : {}),
+        });
+        const model = provider(c.modelId);
+        const result = await model.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        });
+
+        const text = result.content[0].type === "text" ? result.content[0].text : "";
+        expect(text).toContain("--model gemini-3.6-flash");
+        expect(text).not.toContain("--effort");
+      }
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("supports default model and effort in provider options", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "agy-provider-test-"));
     const mockBinary = join(tmp, "mock-agy");

@@ -161,6 +161,40 @@ exit 0
     }
   });
 
+  test("omits --effort when effort is empty or whitespace", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
+    const mockBinary = join(tmp, "mock-agy");
+
+    await writeFile(
+      mockBinary,
+      `#!/usr/bin/env bash
+echo "$@"
+cat -
+exit 0
+`,
+    );
+    await chmod(mockBinary, 0o755);
+
+    try {
+      for (const effort of ["", "   "]) {
+        const result = await runAgy({
+          binary: mockBinary,
+          prompt: "hello",
+          cwd: tmp,
+          model: "gemini-3.6-flash",
+          effort,
+          timeoutMs: 5000,
+        });
+
+        expect(result.stdout).toContain("--model");
+        expect(result.stdout).toContain("gemini-3.6-flash");
+        expect(result.stdout).not.toContain("--effort");
+      }
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("parses stream-json NDJSON and skips DONE snapshot duplicate", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "agy-plugin-test-"));
     const mockBinary = join(tmp, "mock-agy");

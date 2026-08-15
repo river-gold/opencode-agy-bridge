@@ -75,7 +75,7 @@ export async function runAgyStream(
     args.push("--model", input.model);
   }
 
-  if (input.effort) {
+  if (input.effort?.trim()) {
     args.push("--effort", input.effort);
   }
 
