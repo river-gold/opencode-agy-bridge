@@ -21,10 +21,18 @@ jobs:
         with:
           bun-version: latest
 
-      - run: bun install
+      - run: bun install --frozen-lockfile
       - run: bun run build
       - run: bun test
       - run: bun run test:e2e
+      - name: Verify release tag matches package version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "Release tag version ($tag_version) does not match package version ($package_version)."
+            exit 1
+          fi
       - run: npm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

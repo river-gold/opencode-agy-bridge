@@ -33,7 +33,7 @@ npm install opencode-agy-plugin
   "provider": {
     "agy": {
       "npm": "opencode-agy-plugin",
-      "name": "Google Antigravity (via agy CLI)",
+      "name": "Antigravity",
       "options": {
         "binary": "agy",
         "timeoutMs": 300000
@@ -65,7 +65,7 @@ bun test
   "provider": {
     "agy": {
       "npm": "/home/USER/workspace/opencode-agy-plugin",
-      "name": "Google Antigravity (via agy CLI)"
+      "name": "Antigravity"
     }
   }
 }

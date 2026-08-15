@@ -111,7 +111,7 @@ function assignModels(
   cfg.provider ??= {};
   cfg.provider.agy ??= {};
   cfg.provider.agy.npm ??= "opencode-agy-plugin";
-  cfg.provider.agy.name ??= "Google Antigravity (via agy CLI)";
+  cfg.provider.agy.name ??= "Antigravity";
   cfg.provider.agy.models = {
     ...discovered,
     ...cfg.provider.agy.models,
