@@ -54,9 +54,9 @@ Every `agy` invocation uses `--dangerously-skip-permissions`. Changes made by `a
 
 If `models` is omitted, the plugin runs `agy models` and populates the model list.
 
-- When two or more IDs share the same prefix before the final `-`, the final tokens become variants.
-- Example: `gemini-3.7-flash-high` and `gemini-3.7-flash-low` become `gemini-3.7-flash` with `high` and `low` variants.
-- A model ID with no matching sibling remains unchanged.
+- IDs become variants only when the base ID before the final `-` is also returned by `agy models`.
+- Example: `gemini-3.7-flash`, `gemini-3.7-flash-high`, and `gemini-3.7-flash-low` become `gemini-3.7-flash` with `high` and `low` variants.
+- If only suffixed IDs are returned, each original ID remains selectable.
 - The discovered list is cached for 24 hours in `~/.cache/opencode-agy-plugin/models.json`.
 - If at least one manual `models` entry exists, automatic discovery and cache access are skipped.
 

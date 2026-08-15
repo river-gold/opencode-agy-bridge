@@ -52,9 +52,9 @@ bun test
 
 `models`を省略すると、プラグインが`agy models`を実行してモデル一覧を作成する。
 
-- 最後の`-`より前のprefixが2つ以上のIDで共通する場合、最後の文字列をvariantとしてまとめる
-- 例: `gemini-3.7-flash-high`と`gemini-3.7-flash-low`は、`gemini-3.7-flash`の`high`と`low`になる
-- 対応する兄弟IDが1つしかないモデルは元のIDのまま表示される
+- 最後の`-`より前のbase IDも`agy models`の結果に含まれる場合のみ、最後の文字列をvariantとしてまとめる
+- 例: `gemini-3.7-flash`、`gemini-3.7-flash-high`、`gemini-3.7-flash-low`は、`gemini-3.7-flash`の`high`と`low`になる
+- suffix IDだけが返された場合は、各元のIDをそのまま表示する
 - 自動検出した一覧は`~/.cache/opencode-agy-plugin/models.json`に24時間保存される
 - 手動の`models`項目が1つでもある場合、自動検出とキャッシュの利用は行わない
 

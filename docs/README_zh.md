@@ -52,9 +52,9 @@ bun test
 
 省略 `models` 时，插件会运行 `agy models` 并生成模型列表。
 
-- 如果两个或更多 ID 在最后一个 `-` 之前拥有相同前缀，最后的字符串会被作为 variant 合并
-- 例如：`gemini-3.7-flash-high` 和 `gemini-3.7-flash-low` 会合并为 `gemini-3.7-flash` 的 `high` 和 `low`
-- 没有同前缀模型的 ID 会保持不变
+- 只有当最后一个 `-` 之前的 base ID 也由 `agy models` 返回时，才会将最后的字符串合并为 variant
+- 例如：`gemini-3.7-flash`、`gemini-3.7-flash-high` 和 `gemini-3.7-flash-low` 会合并为 `gemini-3.7-flash` 的 `high` 和 `low`
+- 如果只返回带 suffix 的 ID，则每个原始 ID 都会保持可选
 - 自动发现的列表会缓存 24 小时，路径为 `~/.cache/opencode-agy-plugin/models.json`
 - 只要存在一个手动 `models` 条目，就会跳过自动发现和缓存读取
 

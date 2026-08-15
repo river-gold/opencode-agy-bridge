@@ -4,8 +4,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MODEL_CACHE_VERSION = 2;
 
 export interface ModelCacheFile {
+  version?: number;
   binary: string;
   fetchedAt: number;
   models: Record<string, DiscoveredAgyModel>;
@@ -46,6 +48,7 @@ export function parseAgyModels(output: string): Record<string, DiscoveredAgyMode
   }
 
   const baseCount = new Map<string, number>();
+  const rowIds = new Set(rows.map((row) => row.id));
   for (const row of rows) {
     const split = splitLastHyphen(row.id);
     if (!split) continue;
@@ -56,7 +59,7 @@ export function parseAgyModels(output: string): Record<string, DiscoveredAgyMode
 
   for (const row of rows) {
     const split = splitLastHyphen(row.id);
-    if (split && (baseCount.get(split.base) ?? 0) >= 2) {
+    if (split && rowIds.has(split.base) && (baseCount.get(split.base) ?? 0) >= 2) {
       const existing = models[split.base] ?? {
         name: stripSuffixLabel(row.label, split.suffix),
         variants: {},
@@ -89,7 +92,12 @@ async function loadModelCache(path: string): Promise<ModelCacheFile | null> {
   try {
     const raw = await readFile(path, "utf-8");
     const parsed = JSON.parse(raw) as ModelCacheFile;
-    if (!parsed || typeof parsed.fetchedAt !== "number" || !parsed.models) return null;
+    if (
+      !parsed ||
+      parsed.version !== MODEL_CACHE_VERSION ||
+      typeof parsed.fetchedAt !== "number" ||
+      !parsed.models
+    ) return null;
     return parsed;
   } catch {
     return null;
@@ -99,7 +107,7 @@ async function loadModelCache(path: string): Promise<ModelCacheFile | null> {
 export async function saveModelCache(path: string, cache: ModelCacheFile): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = path + ".tmp";
-  await writeFile(tmpPath, JSON.stringify(cache), "utf-8");
+  await writeFile(tmpPath, JSON.stringify({ ...cache, version: MODEL_CACHE_VERSION }), "utf-8");
   await rename(tmpPath, path);
 }
 

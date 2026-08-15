@@ -52,9 +52,9 @@ bun test
 
 모델을 직접 적지 않으면 플러그인이 `agy models`를 실행해 목록을 만든다.
 
-- 동일한 prefix를 가진 ID가 2개 이상이면 마지막 `-` 뒤 문자열을 variant로 묶음
-- 예: `gemini-3.7-flash-high`, `gemini-3.7-flash-low` → `gemini-3.7-flash`의 `high`, `low`
-- 하나만 존재하는 모델 ID는 원래 ID 그대로 표시
+- base ID가 `agy models` 결과에 함께 있을 때만 마지막 `-` 뒤 문자열을 variant로 묶음
+- 예: `gemini-3.7-flash`, `gemini-3.7-flash-high`, `gemini-3.7-flash-low` → `gemini-3.7-flash`의 `high`, `low`
+- suffix ID만 반환되면 각 원본 ID를 그대로 표시
 - 자동 목록은 `~/.cache/opencode-agy-plugin/models.json`에 24시간 캐시
 - 수동 `models` 항목이 하나라도 있으면 자동 검색과 캐시 사용을 건너뜀
 
