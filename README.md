@@ -18,36 +18,7 @@ This project is forked from `raultov/opencode-agy-bridge:main`.
 
 Run `agy` once in a terminal to complete authentication.
 
-### Install From npm
-
-Install the package from npm:
-
-```bash
-npm install opencode-agy-plugin
-```
-
-Then add `opencode-agy-plugin` to the `plugin` list in `~/.config/opencode/opencode.json` or `opencode.jsonc` as shown below:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-agy-plugin"],
-  "provider": {
-    "agy": {
-      "npm": "opencode-agy-plugin",
-      "name": "Antigravity",
-      "options": {
-        "binary": "agy",
-        "timeoutMs": 300000
-      }
-    }
-  }
-}
-```
-
-Restart OpenCode, then run `/model` and select an `agy/...` model. The model list is loaded automatically from `agy models` at startup.
-
-### Use a Local Checkout
+### Install From Source
 
 For local development or testing:
 

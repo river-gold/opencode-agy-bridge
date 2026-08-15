@@ -16,36 +16,7 @@
 
 먼저 터미널에서 `agy`를 한 번 실행해 인증을 완료한다.
 
-### npm 설치
-
-npm에서 패키지를 설치한다.
-
-```bash
-npm install opencode-agy-plugin
-```
-
-그다음 아래처럼 `plugin` 목록에 `opencode-agy-plugin`을 `~/.config/opencode/opencode.json` 또는 `opencode.jsonc`에 추가한다.
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-agy-plugin"],
-  "provider": {
-    "agy": {
-      "npm": "opencode-agy-plugin",
-      "name": "Antigravity",
-      "options": {
-        "binary": "agy",
-        "timeoutMs": 300000
-      }
-    }
-  }
-}
-```
-
-OpenCode를 재시작한 뒤 `/model`에서 `agy/...` 모델을 선택한다. 모델 목록은 시작할 때 `agy models`에서 자동으로 가져온다.
-
-### 로컬 소스 사용
+### 소스에서 설치
 
 개발 중인 코드를 테스트하려면 다음과 같이 빌드한다.
 

@@ -16,36 +16,7 @@
 
 先在终端中运行一次 `agy`，完成身份验证。
 
-### 从 npm 安装
-
-从 npm 安装该软件包：
-
-```bash
-npm install opencode-agy-plugin
-```
-
-然后如下方配置所示，将 `opencode-agy-plugin` 添加到 `~/.config/opencode/opencode.json` 或 `opencode.jsonc` 的 `plugin` 列表中：
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-agy-plugin"],
-  "provider": {
-    "agy": {
-      "npm": "opencode-agy-plugin",
-      "name": "Antigravity",
-      "options": {
-        "binary": "agy",
-        "timeoutMs": 300000
-      }
-    }
-  }
-}
-```
-
-重启 OpenCode，然后运行 `/model`，选择 `agy/...` 模型。模型列表会在启动时从 `agy models` 自动加载。
-
-### 使用本地代码
+### 从源码安装
 
 如果要进行本地开发或测试：
 
