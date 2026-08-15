@@ -16,7 +16,36 @@
 
 ターミナルで一度`agy`を実行し、認証を完了する。
 
-### ソースからインストール
+### npmからインストール
+
+npmからパッケージをインストールする。
+
+```bash
+npm install opencode-agy-plugin
+```
+
+その後、以下のように`~/.config/opencode/opencode.json`または`opencode.jsonc`の`plugin`リストへ`opencode-agy-plugin`を追加する。
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-agy-plugin"],
+  "provider": {
+    "agy": {
+      "npm": "opencode-agy-plugin",
+      "name": "Antigravity",
+      "options": {
+        "binary": "agy",
+        "timeoutMs": 300000
+      }
+    }
+  }
+}
+```
+
+OpenCodeを再起動し、`/model`から`agy/...`モデルを選択する。モデル一覧は起動時に`agy models`から自動取得される。
+
+### ローカルチェックアウトを使う
 
 ローカル開発やテストでは次のコマンドを実行する。
 
