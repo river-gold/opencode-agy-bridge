@@ -4,6 +4,8 @@
 
 このプロジェクトは完全に vibe coding で開発されています。
 
+このプロジェクトは `raultov/opencode-agy-bridge:main` からフォークされています。
+
 ## クイックスタート
 
 ### 前提条件

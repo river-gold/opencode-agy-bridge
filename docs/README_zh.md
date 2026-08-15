@@ -4,6 +4,8 @@
 
 本项目完全通过 vibe coding 开发。
 
+本项目从 `raultov/opencode-agy-bridge:main` fork 而来。
+
 ## 快速开始
 
 ### 前置条件

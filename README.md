@@ -6,6 +6,8 @@ An OpenCode plugin and provider that connects the `agy` CLI to OpenCode. Select 
 
 This project is developed entirely through vibe coding.
 
+This project is forked from `raultov/opencode-agy-bridge:main`.
+
 ## Quick Start
 
 ### Prerequisites

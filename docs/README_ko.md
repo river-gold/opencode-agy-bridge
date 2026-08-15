@@ -4,6 +4,8 @@
 
 이 프로젝트는 전적으로 vibe coding으로 개발된다.
 
+이 프로젝트는 `raultov/opencode-agy-bridge:main`에서 포크되었다.
+
 ## 빠른 시작
 
 ### 사전 조건
